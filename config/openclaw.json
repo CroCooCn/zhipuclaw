@@ -1,0 +1,13 @@
+{
+  "messages": {
+    "tts": {
+      "auto": "always",
+      "provider": "edge",
+      "edge": {
+        "enabled": true,
+        "voice": "zh-CN-XiaoxiaoNeural",
+        "lang": "zh-CN"
+      }
+    }
+  }
+}

@@ -101,13 +101,13 @@ TOOL="/usr/bin/python3 ~/.openclaw/skills/ROS-camera-ws/scripts/camera_ws_client
 最常用命令：
 
 ```bash
-$TOOL get_image --output /tmp/camera.jpg
+$TOOL get_image --output ~/.openclaw/ros-cam/camera.jpg
 ```
 
 指定远端服务地址：
 
 ```bash
-$TOOL --host 172.31.94.183 --port 8766 get_image --output /tmp/camera.jpg
+$TOOL --host 172.31.94.183 --port 8766 get_image --output ~/.openclaw/ros-cam/camera.jpg
 ```
 
 指定压缩质量与 ROS 话题名：
@@ -116,7 +116,7 @@ $TOOL --host 172.31.94.183 --port 8766 get_image --output /tmp/camera.jpg
 $TOOL --host 172.31.94.183 --port 8766 get_image \
   --camera-topic /usb_cam/image_raw \
   --quality 85 \
-  --output /tmp/camera.jpg
+  --output ~/.openclaw/ros-cam/camera.jpg
 ```
 
 返回示例：
@@ -125,7 +125,7 @@ $TOOL --host 172.31.94.183 --port 8766 get_image \
 {
   "success": true,
   "message": "已获取摄像头图像",
-  "local_path": "/tmp/camera.jpg",
+  "local_path": "~/.openclaw/ros-cam/camera.jpg",
   "width": 640,
   "height": 480,
   "quality": 85,
@@ -142,7 +142,7 @@ $TOOL --host 172.31.94.183 --port 8766 get_image \
 ```bash
 python3 ~/.openclaw/skills/ROS-camera-ws/scripts/camera_ws_client.py \
   --host 127.0.0.1 --port 8766 \
-  get_image --output /tmp/camera_check.jpg
+  get_image --output ~/.openclaw/ros-cam/camera.jpg
 ```
 
 如果失败，按这个顺序检查：

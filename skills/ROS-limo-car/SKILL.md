@@ -238,6 +238,42 @@ $TOOL stop
 
 ---
 
+## 原地转圈
+
+最常用命令：
+
+```bash
+$TOOL --host 172.31.94.183 spin_in_place --turns 2.0 --angular-z 0.7
+```
+
+其他例子：
+
+```bash
+$TOOL spin_in_place --turns 1.0 --angular-z 0.5
+$TOOL spin_in_place --turns 2.0
+```
+
+说明：
+
+- `--turns` 表示转圈圈数
+- `--angular-z` 表示角速度，正值左转
+- 当前实现采用尽量简单稳定的时间控制方式
+- 如果实际圈数略偏多或偏少，优先微调 `--angular-z`
+
+返回示例：
+
+```json
+{
+  "success": true,
+  "message": "原地转圈完成",
+  "angular_z": 0.7,
+  "turns": 2.0,
+  "duration": 20.6
+}
+```
+
+---
+
 ## 按指定颜色靠近目标
 
 这是当前最实用的视觉功能。它不是 map 导航，而是视觉伺服：

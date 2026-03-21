@@ -1,0 +1,69 @@
+{
+  "version": 1,
+  "jobs": [
+    {
+      "id": "f0d6d6bc-210a-47c9-8609-e45582f92ea1",
+      "agentId": "wave-agent",
+      "sessionKey": "agent:main:main",
+      "name": "wave-agent 偶数分钟唤醒",
+      "enabled": false,
+      "createdAtMs": 1774133955747,
+      "updatedAtMs": 1774135124254,
+      "schedule": {
+        "kind": "cron",
+        "expr": "*/2 * * * *",
+        "tz": "Asia/Shanghai"
+      },
+      "sessionTarget": "isolated",
+      "wakeMode": "now",
+      "payload": {
+        "kind": "agentTurn",
+        "message": "你该工作了！请用 sessions_send 工具发消息给 Telegram 用户 5867030229，汇报最新酒馆情况。使用 channel: telegram, accountId: wave, to: \"5867030229\""
+      },
+      "delivery": {
+        "mode": "announce",
+        "channel": "telegram",
+        "to": "5867030229",
+        "accountId": "wave"
+      },
+      "state": {
+        "lastRunAtMs": 1774135080002,
+        "lastRunStatus": "ok",
+        "lastStatus": "ok",
+        "lastDurationMs": 44252,
+        "lastDeliveryStatus": "delivered",
+        "consecutiveErrors": 0,
+        "lastDelivered": true
+      }
+    },
+    {
+      "id": "907d22f4-eec0-49c6-9cd2-1b0f96e87977",
+      "agentId": "serve-agent",
+      "name": "serve-agent-call",
+      "enabled": true,
+      "deleteAfterRun": true,
+      "createdAtMs": 1774135394735,
+      "updatedAtMs": 1774135394735,
+      "schedule": {
+        "kind": "at",
+        "at": "2026-03-21T23:23:42.891Z"
+      },
+      "sessionTarget": "isolated",
+      "wakeMode": "now",
+      "payload": {
+        "kind": "agentTurn",
+        "message": "前台呼叫！顾客点酒了！"
+      },
+      "delivery": {
+        "mode": "announce",
+        "channel": "telegram",
+        "to": "5867030229",
+        "accountId": "serve"
+      },
+      "state": {
+        "nextRunAtMs": 1774135422891,
+        "runningAtMs": 1774135422891
+      }
+    }
+  ]
+}
