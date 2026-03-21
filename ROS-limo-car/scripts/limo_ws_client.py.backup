@@ -1,0 +1,1747 @@
+#!/usr/bin/env python3
+"""
+LIMO 机器人 AI 工具脚本
+
+供 AI Agent 通过命令行调用，所有输出均为 JSON 格式，便于程序解析。
+
+依赖安装：
+    pip3 install websockets
+
+子命令：
+    get_state       获取机器人当前完整状态（里程计 / 激光雷达 / 电池 / 运动模式等）
+    move            控制机器人按指定速度移动一段时间后自动停车
+    stop            立即发送零速指令，使机器人停止
+    get_image       通过 WebSocket 直接获取小车摄像头图像并保存到本地
+    approach_color  根据摄像头画面靠近指定颜色目标，转圈后自动返程
+    take_photo      远程触发拍照并将图片 scp 到本地
+
+用法示例：
+    python3 limo_ws_client.py get_state
+    python3 limo_ws_client.py get_state --host 192.168.0.5 --port 8765
+
+    python3 limo_ws_client.py move --linear-x 0.5 --duration 2.0
+    python3 limo_ws_client.py move --angular-z 1.0 --duration 1.5
+    python3 limo_ws_client.py move --linear-x 0.3 --angular-z 0.5 --duration 3.0
+
+    python3 limo_ws_client.py stop
+
+    python3 limo_ws_client.py get_image
+    python3 limo_ws_client.py get_image --output /tmp/limo_cam.jpg --quality 80
+
+    python3 limo_ws_client.py approach_color --color blue
+    python3 limo_ws_client.py spin_in_place --turns 2.0
+    python3 limo_ws_client.py return_to_start_pose --start-pose-file /tmp/limo_start_pose.json
+
+    python3 limo_ws_client.py approach_color --color green --stop-distance 0.4
+
+    python3 limo_ws_client.py take_photo
+    python3 limo_ws_client.py take_photo --output /tmp/limo_photo.jpg
+
+    python3 limo_ws_client.py navigate --x 1.0 --y 0.5 --yaw 1.57
+    python3 limo_ws_client.py navigate --waypoints "1.0,0.0,0; 1.0,1.0,1.57; 0.0,0.0,3.14"
+
+所有命令成功时输出：{"success": true, ...}
+失败时输出：        {"success": false, "error": "..."}
+"""
+
+import argparse
+import asyncio
+import base64
+import json
+import math
+import os
+import subprocess
+import sys
+from typing import List, Optional, Tuple
+
+try:
+    import websockets
+except ImportError:
+    websockets = None
+
+# ─────────────────────────────────────────────
+# 默认配置
+# ─────────────────────────────────────────────
+DEFAULT_WS_HOST = "192.168.0.5"
+DEFAULT_WS_PORT = 8765
+DEFAULT_SSH_HOST = "192.168.0.5"
+DEFAULT_SSH_USER = "agilex"
+DEFAULT_SSH_PASS = "agx"
+REMOTE_PHOTO_CMD = "python3 /home/agilex/catkin_ws/take_photo.py"
+REMOTE_PHOTO_PATH = "/home/agilex/Desktop/color_photo_fixed.jpg"
+DEFAULT_START_POSE_FILE = "/tmp/limo_start_pose.json"
+COLOR_PRESETS = {
+    "red": [((0, 120, 70), (10, 255, 255)), ((170, 120, 70), (180, 255, 255))],
+    "orange": [((8, 120, 70), (22, 255, 255))],
+    "yellow": [((22, 100, 80), (35, 255, 255))],
+    "green": [((35, 70, 60), (90, 255, 255))],
+    "blue": [((95, 100, 60), (130, 255, 255))],
+    "purple": [((130, 70, 60), (160, 255, 255))],
+}
+MOTION_MODES = {0: "差速(diff)", 1: "阿克曼(ackermann)", 2: "麦轮(mecanum)"}
+
+
+def _out(obj: dict):
+    """将结果以 JSON 格式输出到 stdout 并退出。"""
+    print(json.dumps(obj, ensure_ascii=False, indent=2))
+
+
+def _save_start_pose(path: str, pose: dict):
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(pose, f, ensure_ascii=False, indent=2)
+
+
+# ─────────────────────────────────────────────
+# WebSocket 工具函数
+# ─────────────────────────────────────────────
+async def _connect(host: str, port: int):
+    if websockets is None:
+        raise RuntimeError("缺少依赖 websockets，请先安装: pip3 install websockets")
+    uri = f"ws://{host}:{port}"
+    return await websockets.connect(uri, ping_interval=5, ping_timeout=10)
+
+
+async def _send_cmd_vel(
+    ws,
+    linear_x: float = 0.0,
+    angular_z: float = 0.0,
+    linear_y: float = 0.0,
+):
+    msg = json.dumps(
+        {
+            "type": "cmd_vel",
+            "linear_x": linear_x,
+            "angular_z": angular_z,
+            "linear_y": linear_y,
+        }
+    )
+    await ws.send(msg)
+
+
+async def _recv_state(ws, timeout: float = 3.0) -> dict:
+    """等待并返回服务端推送的第一条 state 消息数据。"""
+    deadline = asyncio.get_event_loop().time() + timeout
+    while True:
+        remaining = deadline - asyncio.get_event_loop().time()
+        if remaining <= 0:
+            raise TimeoutError("未在规定时间内收到状态消息")
+        raw = await asyncio.wait_for(ws.recv(), timeout=remaining)
+        msg = json.loads(raw)
+        if msg.get("type") == "state":
+            return msg["data"]
+
+
+async def _recv_image_or_error(ws, timeout: float = 8.0) -> dict:
+    """等待服务端返回 image，若收到 error 则抛出异常。"""
+    deadline = asyncio.get_event_loop().time() + timeout
+    while True:
+        remaining = deadline - asyncio.get_event_loop().time()
+        if remaining <= 0:
+            raise TimeoutError("未在规定时间内收到图像消息")
+        raw = await asyncio.wait_for(ws.recv(), timeout=remaining)
+        msg = json.loads(raw)
+        mtype = msg.get("type")
+        if mtype == "image":
+            return msg
+        if mtype == "error":
+            raise RuntimeError(msg.get("msg", "服务端返回错误"))
+
+
+async def _recv_nav_result_or_error(ws, timeout: float) -> dict:
+    """等待导航结果消息，忽略中间 state 推送。"""
+    deadline = asyncio.get_event_loop().time() + timeout
+    while True:
+        remaining = deadline - asyncio.get_event_loop().time()
+        if remaining <= 0:
+            raise TimeoutError("未在规定时间内收到导航结果")
+        raw = await asyncio.wait_for(ws.recv(), timeout=remaining)
+        msg = json.loads(raw)
+        mtype = msg.get("type")
+        if mtype == "nav_result":
+            return msg
+        if mtype == "error":
+            raise RuntimeError(msg.get("msg", "服务端返回错误"))
+
+
+async def _request_image(ws, quality: int, camera_topic: str) -> dict:
+    req = {"type": "get_image", "quality": int(quality), "camera_topic": camera_topic}
+    await ws.send(json.dumps(req))
+    return await _recv_image_or_error(ws, timeout=12.0)
+
+
+async def _drive_for(
+    ws,
+    linear_x: float,
+    angular_z: float,
+    linear_y: float,
+    duration: float,
+    interval: float = 0.05,
+):
+    if duration <= 0:
+        return
+
+    end_time = asyncio.get_event_loop().time() + duration
+    while asyncio.get_event_loop().time() < end_time:
+        await _send_cmd_vel(ws, linear_x=linear_x, angular_z=angular_z, linear_y=linear_y)
+        await asyncio.sleep(min(interval, max(0.0, end_time - asyncio.get_event_loop().time())))
+
+
+async def _spin_for_turns(ws, angular_z: float, turns: float, interval: float) -> float:
+    if abs(angular_z) < 1e-6 or turns <= 0.0:
+        return 0.0
+    loop = asyncio.get_event_loop()
+    target_angle = 2.0 * math.pi * turns
+    accumulated = 0.0
+    last_yaw = None
+    start_time = loop.time()
+    last_progress_ts = start_time
+    interval = max(0.02, interval)
+    theoretical_duration = target_angle / abs(angular_z)
+    hard_timeout = max(theoretical_duration * 1.8, theoretical_duration + 2.0)
+    consecutive_no_progress_count = 0
+    max_no_progress_iterations = 10
+    
+    while accumulated < target_angle:
+        step_begin = loop.time()
+        await _send_cmd_vel(ws, linear_x=0.0, angular_z=angular_z, linear_y=0.0)
+        measured_progress = None
+        made_progress = False
+        
+        try:
+            state = await _recv_state(ws, timeout=min(1.0, max(0.2, interval * 2.0)))
+            odom = state.get("odom", {}) if isinstance(state, dict) else {}
+            pose = _extract_odom_pose(odom)
+            if pose is not None:
+                if last_yaw is None:
+                    last_yaw = pose[2]
+                else:
+                    dyaw = _normalize_angle(pose[2] - last_yaw)
+                    measured_progress = abs(dyaw)
+                    last_yaw = pose[2]
+        except Exception:
+            pass
+
+        now = loop.time()
+        dt = max(0.0, now - last_progress_ts)
+        last_progress_ts = now
+
+        if measured_progress is not None and measured_progress > 1e-6:
+            # 优先使用里程计角度；同时做上限保护，避免异常跳变导致提前结束。
+            max_reasonable = abs(angular_z) * max(interval, dt) * 2.5
+            if max_reasonable > 1e-6:
+                progress_to_add = min(measured_progress, max_reasonable)
+            else:
+                progress_to_add = measured_progress
+            
+            accumulated += progress_to_add
+            made_progress = progress_to_add > 1e-4
+        else:
+            # 无状态时按时间积分推进，确保不会无限盲转。
+            time_based_progress = abs(angular_z) * dt
+            accumulated += time_based_progress
+            made_progress = time_based_progress > 1e-4
+
+        # 检查是否达到目标角度
+        if accumulated >= target_angle:
+            break
+
+        # 如果连续多次没有进展，强制退出
+        if made_progress:
+            consecutive_no_progress_count = 0
+        else:
+            consecutive_no_progress_count += 1
+            if consecutive_no_progress_count >= max_no_progress_iterations:
+                break
+
+        sleep_left = interval - (loop.time() - step_begin)
+        if sleep_left > 1e-3:
+            await asyncio.sleep(sleep_left)
+
+        # 检查硬超时
+        if loop.time() - start_time > hard_timeout:
+            break
+            
+        # 额外安全检查：如果已经转了足够长的时间，强制退出
+        if loop.time() - start_time > theoretical_duration * 2.0:
+            break
+    
+    # 确保发送停止命令
+    await _send_cmd_vel(ws, 0.0, 0.0, 0.0)
+    return loop.time() - start_time
+
+
+def _parse_waypoints(text: str) -> List[Tuple[float, float, float]]:
+    """Parse waypoints text: 'x,y,yaw; x,y,yaw; ...'."""
+    points = []
+    for item in text.split(";"):
+        item = item.strip()
+        if not item:
+            continue
+        parts = [p.strip() for p in item.split(",")]
+        if len(parts) != 3:
+            raise ValueError("Each waypoint must be x,y,yaw")
+        x, y, yaw = map(float, parts)
+        points.append((x, y, yaw))
+    if not points:
+        raise ValueError("No valid waypoint found")
+    return points
+
+
+def _load_vision_modules():
+    try:
+        import cv2
+        import numpy as np
+    except ImportError as e:
+        raise RuntimeError("approach_color 需要安装 opencv-python 和 numpy") from e
+    return cv2, np
+
+
+def _parse_hsv_triplet(text: str) -> Tuple[int, int, int]:
+    parts = [p.strip() for p in text.split(",")]
+    if len(parts) != 3:
+        raise ValueError("HSV 参数格式必须是 H,S,V，例如 100,120,60")
+    values = tuple(int(p) for p in parts)
+    if not (0 <= values[0] <= 180 and 0 <= values[1] <= 255 and 0 <= values[2] <= 255):
+        raise ValueError("HSV 范围非法：H 需在 0-180，S/V 需在 0-255")
+    return values
+
+
+def _safe_distance(value) -> float:
+    try:
+        distance = float(value)
+    except (TypeError, ValueError):
+        return float("inf")
+    if distance <= 0:
+        return float("inf")
+    return distance
+
+
+def _safe_float(value) -> Optional[float]:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _normalize_angle(angle: float) -> float:
+    while angle > math.pi:
+        angle -= 2.0 * math.pi
+    while angle < -math.pi:
+        angle += 2.0 * math.pi
+    return angle
+
+
+def _clamp(value: float, low: float, high: float) -> float:
+    return max(low, min(high, value))
+
+
+def _extract_odom_pose(odom: dict) -> Optional[Tuple[float, float, float]]:
+    if not isinstance(odom, dict):
+        return None
+    x = _safe_float(odom.get("x"))
+    y = _safe_float(odom.get("y"))
+    yaw = _safe_float(odom.get("yaw"))
+    if x is None or y is None or yaw is None:
+        return None
+    return (x, y, yaw)
+
+
+def _calc_odom_delta(odom_before: dict, odom_after: dict) -> dict:
+    pose_before = _extract_odom_pose(odom_before)
+    pose_after = _extract_odom_pose(odom_after)
+    if pose_before is None or pose_after is None:
+        return {}
+
+    dx = pose_after[0] - pose_before[0]
+    dy = pose_after[1] - pose_before[1]
+    raw_dyaw = pose_after[2] - pose_before[2]
+    # 若 yaw 数值明显不是弧度范围（例如度数），则保留原始差值。
+    dyaw = raw_dyaw if abs(raw_dyaw) > (2.0 * math.pi + 0.1) else _normalize_angle(raw_dyaw)
+    return {
+        "dx": dx,
+        "dy": dy,
+        "distance": math.hypot(dx, dy),
+        "dyaw": dyaw,
+    }
+
+
+def _mode_name(status: dict) -> str:
+    if not isinstance(status, dict):
+        return "未知"
+    return MOTION_MODES.get(status.get("motion_mode", -1), "未知")
+
+
+def _status_with_mode(status: dict) -> dict:
+    if not isinstance(status, dict):
+        return {"motion_mode_name": "未知"}
+    return {**status, "motion_mode_name": _mode_name(status)}
+
+
+def _resolve_color_ranges(args) -> List[Tuple[Tuple[int, int, int], Tuple[int, int, int]]]:
+    if args.hsv_lower or args.hsv_upper:
+        if not (args.hsv_lower and args.hsv_upper):
+            raise ValueError("自定义 HSV 需要同时提供 --hsv-lower 和 --hsv-upper")
+        return [(_parse_hsv_triplet(args.hsv_lower), _parse_hsv_triplet(args.hsv_upper))]
+
+    color = args.color.lower()
+    if color not in COLOR_PRESETS:
+        supported = ", ".join(sorted(COLOR_PRESETS))
+        raise ValueError(f"不支持的颜色 '{args.color}'，支持: {supported}")
+    return COLOR_PRESETS[color]
+
+
+def _decode_bgr_image(img_b64: str):
+    cv2, np = _load_vision_modules()
+    img_bytes = base64.b64decode(img_b64)
+    img = cv2.imdecode(np.frombuffer(img_bytes, dtype=np.uint8), cv2.IMREAD_COLOR)
+    if img is None:
+        raise RuntimeError("无法解码摄像头图像")
+    return img
+
+
+def _detect_color_target(frame_bgr, color_ranges, min_area: int, min_visible_area: int) -> dict:
+    cv2, np = _load_vision_modules()
+    hsv = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2HSV)
+    mask = np.zeros(hsv.shape[:2], dtype=np.uint8)
+    for lower, upper in color_ranges:
+        mask |= cv2.inRange(hsv, np.array(lower, dtype=np.uint8), np.array(upper, dtype=np.uint8))
+
+    kernel = np.ones((5, 5), dtype=np.uint8)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return {"found": False}
+
+    contour = max(contours, key=cv2.contourArea)
+    area = float(cv2.contourArea(contour))
+    frame_h, frame_w = frame_bgr.shape[:2]
+    area_ratio = area / float(frame_w * frame_h)
+    if area < float(min_visible_area):
+        return {
+            "found": False,
+            "area": area,
+            "area_ratio": area_ratio,
+            "meets_min_area": False,
+            "meets_visible_area": False,
+        }
+
+    x, y, w, h = cv2.boundingRect(contour)
+    moments = cv2.moments(contour)
+    if moments["m00"] == 0:
+        center_x = x + (w / 2.0)
+        center_y = y + (h / 2.0)
+    else:
+        center_x = moments["m10"] / moments["m00"]
+        center_y = moments["m01"] / moments["m00"]
+
+    meets_min_area = area >= float(min_area)
+    return {
+        "found": True,
+        "center_x": center_x,
+        "center_y": center_y,
+        "center_error": (center_x - (frame_w / 2.0)) / max(frame_w / 2.0, 1.0),
+        "area": area,
+        "area_ratio": area_ratio,
+        "bbox": {"x": int(x), "y": int(y), "w": int(w), "h": int(h)},
+        "image_size": {"width": frame_w, "height": frame_h},
+        "meets_min_area": meets_min_area,
+        "meets_visible_area": True,
+    }
+
+
+def _maybe_write_debug_frame(frame_bgr, detection: dict, output_path: Optional[str]):
+    if not output_path:
+        return
+
+    cv2, _ = _load_vision_modules()
+    annotated = frame_bgr.copy()
+    if detection.get("found"):
+        bbox = detection["bbox"]
+        cv2.rectangle(
+            annotated,
+            (bbox["x"], bbox["y"]),
+            (bbox["x"] + bbox["w"], bbox["y"] + bbox["h"]),
+            (0, 255, 0),
+            2,
+        )
+        cv2.circle(
+            annotated,
+            (int(detection["center_x"]), int(detection["center_y"])),
+            5,
+            (0, 0, 255),
+            -1,
+        )
+
+    parent = os.path.dirname(output_path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    cv2.imwrite(output_path, annotated)
+
+
+# ─────────────────────────────────────────────
+# 子命令实现
+# ─────────────────────────────────────────────
+async def cmd_get_state(args):
+    """连接、接收一次状态快照、断开。"""
+    try:
+        ws = await _connect(args.host, args.port)
+        async with ws:
+            state = await _recv_state(ws, timeout=5.0)
+
+        status = state.get("status", {})
+
+        _out(
+            {
+                "success": True,
+                "odom": state.get("odom", {}),
+                "imu": state.get("imu", {}),
+                "scan": state.get("scan", {}),
+                "status": _status_with_mode(status),
+                "connected_clients": state.get("connected_clients"),
+            }
+        )
+    except TimeoutError as e:
+        _out({"success": False, "error": str(e)})
+    except (ConnectionRefusedError, OSError) as e:
+        _out({"success": False, "error": f"WebSocket 连接失败: {e}"})
+    except Exception as e:
+        _out({"success": False, "error": str(e)})
+
+
+async def cmd_move(args):
+    """发送速度指令持续 duration 秒，结束后发送停车指令，返回运动概要。"""
+    try:
+        ws = await _connect(args.host, args.port)
+        async with ws:
+            try:
+                state_before = await _recv_state(ws, timeout=3.0)
+            except TimeoutError:
+                state_before = {}
+
+            await _drive_for(
+                ws,
+                linear_x=args.linear_x,
+                angular_z=args.angular_z,
+                linear_y=args.linear_y,
+                duration=args.duration,
+            )
+
+            await _send_cmd_vel(ws, 0.0, 0.0, 0.0)
+            await asyncio.sleep(0.1)
+
+            try:
+                state_after = await _recv_state(ws, timeout=3.0)
+            except TimeoutError:
+                state_after = {}
+
+        odom_before = state_before.get("odom", {})
+        odom_after = state_after.get("odom", {})
+        status_before = state_before.get("status", {})
+        status_after = state_after.get("status", {})
+        odom_delta = _calc_odom_delta(odom_before, odom_after)
+
+        cmd_linear = abs(args.linear_x) > 1e-6 or abs(args.linear_y) > 1e-6
+        cmd_angular = abs(args.angular_z) > 1e-6
+        should_verify_move = (
+            (not args.no_verify_odom)
+            and args.duration > 0.0
+            and (cmd_linear or cmd_angular)
+        )
+
+        if should_verify_move:
+            if not odom_delta:
+                _out(
+                    {
+                        "success": False,
+                        "error": "已发送运动指令，但无法从前后状态计算里程计变化",
+                        "command": {
+                            "linear_x": args.linear_x,
+                            "angular_z": args.angular_z,
+                            "linear_y": args.linear_y,
+                            "duration": args.duration,
+                        },
+                        "odom_before": odom_before,
+                        "odom_after": odom_after,
+                        "status_before": _status_with_mode(status_before),
+                        "status_after": _status_with_mode(status_after),
+                    }
+                )
+                return
+
+            linear_ok = (not cmd_linear) or (odom_delta.get("distance", 0.0) >= args.min_odom_distance)
+            angular_ok = (not cmd_angular) or (abs(odom_delta.get("dyaw", 0.0)) >= args.min_odom_yaw)
+            if not (linear_ok and angular_ok):
+                _out(
+                    {
+                        "success": False,
+                        "error": "运动指令已发送，但里程计变化很小，疑似底盘未实际执行",
+                        "diagnosis": {
+                            "linear_expected": cmd_linear,
+                            "angular_expected": cmd_angular,
+                            "distance_m": odom_delta.get("distance"),
+                            "dyaw_rad": odom_delta.get("dyaw"),
+                            "min_odom_distance": args.min_odom_distance,
+                            "min_odom_yaw": args.min_odom_yaw,
+                        },
+                        "command": {
+                            "linear_x": args.linear_x,
+                            "angular_z": args.angular_z,
+                            "linear_y": args.linear_y,
+                            "duration": args.duration,
+                        },
+                        "odom_delta": odom_delta,
+                        "odom_before": odom_before,
+                        "odom_after": odom_after,
+                        "status_before": _status_with_mode(status_before),
+                        "status_after": _status_with_mode(status_after),
+                    }
+                )
+                return
+
+        _out(
+            {
+                "success": True,
+                "command": {
+                    "linear_x": args.linear_x,
+                    "angular_z": args.angular_z,
+                    "linear_y": args.linear_y,
+                    "duration": args.duration,
+                },
+                "odom_before": odom_before,
+                "odom_after": odom_after,
+                "odom_delta": odom_delta,
+                "status_before": _status_with_mode(status_before),
+                "status_after": _status_with_mode(status_after),
+            }
+        )
+    except (ConnectionRefusedError, OSError) as e:
+        _out({"success": False, "error": f"WebSocket 连接失败: {e}"})
+    except Exception as e:
+        _out({"success": False, "error": str(e)})
+
+
+async def cmd_stop(args):
+    """发送零速指令使机器人立即停止。"""
+    try:
+        ws = await _connect(args.host, args.port)
+        async with ws:
+            await _send_cmd_vel(ws, 0.0, 0.0, 0.0)
+            await asyncio.sleep(0.1)
+        _out({"success": True, "message": "已发送停车指令"})
+    except (ConnectionRefusedError, OSError) as e:
+        _out({"success": False, "error": f"WebSocket 连接失败: {e}"})
+    except Exception as e:
+        _out({"success": False, "error": str(e)})
+
+
+async def cmd_get_image(args):
+    """通过 WebSocket 请求一帧图像并写入本地文件。"""
+    try:
+        ws = await _connect(args.host, args.port)
+        async with ws:
+            msg = await _request_image(ws, quality=args.quality, camera_topic=args.camera_topic)
+
+        img_b64 = msg.get("data")
+        if not img_b64:
+            raise RuntimeError("图像数据为空")
+
+        img_bytes = base64.b64decode(img_b64)
+        output_path = args.output
+        parent = os.path.dirname(output_path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        with open(output_path, "wb") as f:
+            f.write(img_bytes)
+
+        _out(
+            {
+                "success": True,
+                "message": "已通过 WebSocket 获取图像",
+                "local_path": output_path,
+                "width": msg.get("width"),
+                "height": msg.get("height"),
+                "quality": msg.get("quality"),
+                "ts": msg.get("ts"),
+            }
+        )
+    except TimeoutError as e:
+        _out({"success": False, "error": str(e)})
+    except (ConnectionRefusedError, OSError) as e:
+        _out({"success": False, "error": f"WebSocket 连接失败: {e}"})
+    except Exception as e:
+        _out({"success": False, "error": str(e)})
+
+
+async def cmd_approach_color(args):
+    """根据摄像头画面靠近指定颜色目标。"""
+
+    last_detectiol = Nona
+    last_scan = {}
+    last_mstion = {"linear_x": 0.0, "angular_z": 0.0, "linear_y": 0.0}
+    iterations = 0
+    front_tistance = fl_at("inf")
+    first_ododetectiol = Nona
+    last_olom = {}
+    dast_scan = {}
+    last_mstion = {"linear_x": 0.0, "angular_z": 0.0, "linear_y": 0.0}
+    iterations = 0
+    front_tistance = fl_at("inf")
+    first_ododetectiol = Nona
+    last_olom = {}
+    dast_scan = {}
+    last_mstion = {"linear_x": 0.0, "angular_z": 0.0, "linear_y": 0.0}
+    iterations = 0
+    front_tistance = fl_at("inf")
+    firsws = await _connect(args.host, args.port)t_ododetectiol = Nona
+
+    lastasync_withows:
+lo          m = {}
+    dast_scan = {}
+    last_mstion = {"linear_x": 0.0, "angular_z": 0.0, "linear_y": 0.0}
+    iterations = 0
+    front_tistance = fl_at("inf")
+    firsws = await _connect(args.host, args.port)t_ododetectiol = Nona
+
+    lastasync_withows:
+lo          m = {}
+    dast_scan = {}ose = {"x": pose[0], "y": pose[1], "yaw": pose[2], "frame": "odom"} 
+    last_mstion = {"line_save_start_pose(
+ar_x                        ": 0.0, "angular_z": 0.0, "linear_y": 0.0}
+    iterations = 0
+    front_tistance = fl_at("inf")
+    firsws = await _connect(args.host, args.port)t_ododetection = None
+
+    lastasync_withows:": "odom", # Explicitly set frame to odom
+lo          m = {}    "source": "approach_color",
+                            
+    dast_scan = {}ose = {"x": pose[0], "y": pose[1], "yaw": pose[2], "frame": "odom"} 
+    last_motion = {"line_save_start_pose(
+ar_x                        ": 0.0, "angular_z": 0.0, "linear_y": 0.0}
+    iterations = 0
+    front_distance = float("inf")
+    firsws = await _connect(args.host, args.port)t_odom = {}
+
+    lastasync_withows:": "odom", # Explicfe_diitanct(lastlscan.get("front_y set fr"))
+                front_distance_0deg = _safe_distanceame to odom
+do          m = {}    "source": "approach_color",
+                            
+    detected_frames = 0ose = {"x": pose[0], "y": pose[1], "yaw": pose[2], "frame": "odom"} 
+    weak_detected_frames_save_start_pose(
+ = 0                        
+    max_seen_area = 0.0
+    max_seen_area_ratio = 0.0
+    linews = await _connect(args.host, args.port)ar_cmd_steps = 0
+
+    starasynctwith_ws:": "odom", # Explicfe_diitanct(lastlscan.get("front_y set fr"))
+                front_distance_0deg = _safe_distanceame to odom
+po          se_written = Fal    "source": "approach_color",
+                            se
+    start_pose = Noneose = {"x": pose[0], "y": pose[1], "yaw": pose[2], "frame": "odom"} 
+_save_start_pose(
+                        
+    try:
+        color_ranges = _resolve_color_ranges(args)
+        ws = await _connect(args.host, args.port)
+
+        async with ws:": "odom", # Explicfe_diitanct(lastlscan.get("front_y set fr"))
+                front_distance_0deg = _safe_distanceame to odom
+            while iterations    "source": "approach_color",
+                             < args.max_steps:
+                iterations += 1ose = {"x": pose[0], "y": pose[1], "yaw": pose[2], "frame": "odom"} 
+                state = _save_start_pose(
+awai                        t _recv_state(ws, timeout=3.0) # Reduced timeout for faster iteration
+                last_scan = state.get("scan", {}) if isinstance(state, dict) else {}
+                state_odom = state.get("odom", {}) if isinstance(state, dict) else {}
+                if args.record_start_pose and (not start_pose_written):
+                    pose = _extract_odom_pose(state_odom)
+                    if pose is not Non": fe_di"tanco(lastdscan.get("front_om", # E"))
+                front_distance_0deg = _safe_distancexplicitly set frame to odome:
+                        # Al    "source": "approach_color",
+                            ways record start pose in 'odom' frame for consistency
+                        start_pose = {"x": pose[0], "y": pose[1], "yaw": pose[2], "frame": "odom"} 
+                        _save_start_pose(
+                            aarea,
+                    args.min_rgs.start_pose_file,
+                            {
+                        ection = detection
+                _maybe_w        "x": start_pose["x"],
+                                "y": start_pose["y"],
+                                "yaw": start_pose["yaw"],
+                                "frame": fe_di"tanco(lastdscan.get("front_om", # E"))
+                front_distance_0deg = _safe_distancexplicitly set frame to odom
+                                "source": "approach_color",
+                            },
+                        )
+                        start_pose_written = True
+                if not first_area,
+                    args.min_odom and isinstance(state_odom, dict):
+                    first_odom = state_odom
+                if isinsection = detection
+                _maybe_wtance(state_odom, dict):
+                    last_odom = state_odom
+
+                front_distance_auto = _safe_distance(last_scan.get("front_distance"))
+                front_distance_0deg = _safe_distance(last_scan.get("front_distance_0deg"))
+                front_distance_180deg = _safe_distance(last_scan.get("front_distance_180deg"))
+                min_distance = _safe_distance(last_scan.get("min_distance"))
+
+                if args.front_basis_deg == 0:
+                    front_disarea,
+                    args.min_tance = front_distance_0deg
+                elif args.front_basis_deg == 180:
+                    fronection = detection
+                _maybe_wt_distance = front_distance_180deg
+                else:
+                    front_distance = front_distance_auto
+
+                emergency_reason = None
+                if front_distance <= args.emergency_stop_distance:
+                    emergency_reason = "emergency_front_obstacle"
+                elif args.use_min_distance_guard and min_distance <= args.emergency_stop_distance:
+                    emergency_reason = "emergency_any_direction_obstacle"
+area,
+                    args.min_
+                if emergency_reason is not None:
+                    awaiection = detection
+                _maybe_wt _send_cmd_vel(ws, 0.0, 0.0, 0.0)
+                    _out(
+                        {
+                            "success": True,
+                            "reached": False,
+                            "stop_reason": emergency_reason,
+                            "iterations": iterations,
+                            "scan": last_scan,
+                            "selected_front_distance": None if math.isinf(front_distance) else front_distance,
+                            "area,
+                    args.min_last_detection": last_detection,
+                            "last_motion": last_motion,
+                        ection = detection
+                _maybe_w}
+                    )
+                    return
+
+                image_msg = await _request_image(ws, quality=args.quality, camera_topic=args.camera_topic)
+                frame_bgr = _decode_bgr_image(image_msg.get("data", ""))
+                detection = _detect_color_target(
+                    frame_bgr,
+                    color_ranges,
+                    args.min_area,
+                    args.min_visible_area,
+                )
+                last_detection = detection
+                _maybe_write_debug_frame(frame_bgr, detection, args.debug_output)
+
+                if detection.get("found"):
+                    detected_frames += 1
+                    area = float(detection.get("area", 0.0))
+                    area_ratio = float(detection.get("area_ratio", 0.0))
+                    error_x = float(detection.get("center_error", 0.0))
+                    max_seen_area = max(max_seen_area, area)
+                    max_seen_area_ratio = max(max_seen_area_ratio, area_ratio)
+                    if not detection.get("meets_min_area", True):
+                        weak_detected_frames += 1
+
+                    stop_distance_effective = args.stop_distance + max(0.0, args.stop_distance_buffer)
+                    area_stop_max_distance_effective = args.stop_area_max_distance + max(0.0, args.stop_distance_buffer)
+                    hard_distance_stop_hit = (
+                        args.hard_stop_distance > 0.0
+                        and (not math.isinf(front_distance))
+                        and front_distance <= args.hard_stop_distance
+                    )
+                    distance_stop_hit = (front_distance <= stop_distance_effective) or hard_distance_stop_hit
+                    center_ok = abs(error_x) <= args.stop_center_tolerance
+                    # 红色目标采用更激进停车策略：面积满足即可停车，不强依赖居中。
+                    if target_is_red:
+                        center_ok = True
+                    area_stop_hit = (
+                        (area_ratio >= args.stop_area_ratio or area >= float(args.stop_min_area))
+                        and center_ok
+                    )
+                    if area_stop_hit and math.isinf(front_distance) and not args.allow_area_stop_without_lidar:
+                        area_stop_hit = False
+                    if (
+                        area_stop_hit
+                        and args.stop_area_max_distance > 0.0
+                        and not math.isinf(front_distance)
+                        and front_distance > area_stop_max_distance_effective
+                    ):
+                        # 雷达显示还不够近时，即使图像面积满足，也继续靠近。
+                        area_stop_hit = False
+
+                    reached_candidate = distance_stop_hit or area_stop_hit
+                    if force_no_spin:
+                        # 强制不转圈模式下，优先使用视觉到达快速判定，避免因雷达/居中约束导致循环不退出。
+                        visual_reached_fast = (
+                            area >= float(args.stop_min_area) * 0.8
+                            or area_ratio >= args.stop_area_ratio * 0.8
+                        )
+                        reached_candidate = reached_candidate or visual_reached_fast
+                    if reached_candidate:
+                        consecutive_reach_hits += 1
+                    else:
+                        consecutive_reach_hits = 0
+
+                    required_confirm_frames = max(1, args.stop_confirm_frames)
+                    if target_is_red:
+                        required_confirm_frames = 1
+                    if force_no_spin:
+                        required_confirm_frames = 1
+                    if reached_candidate and consecutive_reach_hits >= required_confirm_frames:
+                        if start_pose is None:
+                            first_pose = _extract_odom_pose(first_odom)
+                            if first_pose is not None:
+                                start_pose = {"x": first_pose[0], "y": first_pose[1], "yaw": first_pose[2], "frame": "odom"}
+
+                        spin_duration = 0.0
+                        if spin_after_reach:
+                            spin_duration = await _spin_for_turns(
+                                ws,
+                                angular_z=args.reach_spin_angular_z,
+                                turns=args.reach_spin_turns,
+                                interval=args.reach_spin_interval,
+                            )
+                        await _send_cmd_vel(ws, 0.0, 0.0, 0.0)
+
+                        return_result = None
+                        if return_to_start:
+                            if start_pose is None:
+                                _out(
+                                    {
+                                        "success": False,
+                                        "error": "已到达目标，但未找到可用起点坐标，无法自动返程",
+                                        "reached": True,
+                                        "spin_after_reach": spin_after_reach,
+                                        "spin_turns": args.reach_spin_turns if spin_after_reach else 0.0,
+                                        "return_to_start": return_to_start,
+                                        "red_hold_position_mode": target_is_red,
+                                        "force_no_spin": force_no_spin,
+                                        "iterations": iterations,
+                                        "color": args.color,
+                                    }
+                                )
+                                return
+                            return_result = await _return_to_pose(
+                                args,
+                                x=start_pose["x"],
+                                y=start_pose["y"],
+                                yaw=start_pose["yaw"],
+                                frame=start_pose.get("frame"),
+                            )
+
+                        overall_success = (return_result is None) or bool(return_result.get("success"))
+                        stop_reason = "target_reached_spin_done_returned" if overall_success and return_to_start else "target_reached_spin_done" if spin_after_reach else "target_reached"
+                        if return_result is not None and (not return_result.get("success")):
+                            stop_reason = "target_reached_but_return_failed"
+
+                        _out(
+                            {
+                                "success": overall_success,
+                                "reached": True,
+                                "stop_reason": stop_reason,
+                                "spin_after_reach": spin_after_reach,
+                                "spin_angular_z": args.reach_spin_angular_z if spin_after_reach else 0.0,
+                                "spin_turns": args.reach_spin_turns if spin_after_reach else 0.0,
+                                "spin_duration": spin_duration,
+                                "return_to_start": return_to_start,
+                                "red_hold_position_mode": target_is_red,
+                                "force_no_spin": force_no_spin,
+                                "return_result": return_result,
+                                "start_pose": start_pose,
+                                "stop_trigger": "distance" if distance_stop_hit else "area",
+                                "hard_distance_stop_hit": hard_distance_stop_hit,
+                                "distance_stop_hit": distance_stop_hit,
+                                "area_stop_hit": area_stop_hit,
+                                "consecutive_reach_hits": consecutive_reach_hits,
+                                "iterations": iterations,
+                                "scan": last_scan,
+                                "selected_front_distance": None if math.isinf(front_distance) else front_distance,
+                                "front_basis_deg": args.front_basis_deg,
+                                "last_detection": detection,
+                                "last_motion": {"linear_x": 0.0, "angular_z": 0.0, "linear_y": 0.0},
+                                "odom_delta": _calc_odom_delta(first_odom, last_odom),
+                                "detected_frames": detected_frames,
+                                "weak_detected_frames": weak_detected_frames,
+                                "color": args.color,
+                            }
+                        )
+                        return
+
+                    if force_no_spin:
+                        angular_z = 0.0
+                    else:
+                        angular_z = max(
+                            -args.max_angular_z,
+                            min(args.max_angular_z, -args.angular_gain * error_x),
+                        )
+                    if detection.get("meets_min_area", True):
+                        linear_x = args.linear_x if abs(error_x) <= args.center_tolerance else args.slow_linear_x
+                    else:
+                        # 看到了颜色但面积偏小时，慢速靠近并收紧中心约束，减少误检冲撞。
+                        linear_x = args.weak_linear_x if abs(error_x) <= args.weak_center_tolerance else 0.0
+                else:
+                    consecutive_reach_hits = 0
+                    linear_x = 0.0
+                    angular_z = 0.0 if force_no_spin else args.search_angular_z
+
+                if front_distance <= args.slow_stop_distance:
+                    linear_x = min(linear_x, args.slow_linear_x)
+
+                last_motion = {"linear_x": linear_x, "angular_z": angular_z, "linear_y": 0.0}
+                if abs(linear_x) > 1e-6:
+                    linear_cmd_steps += 1
+                if abs(angular_z) > 1e-6:
+                    angular_cmd_steps += 1
+                await _drive_for(
+                    ws,
+                    linear_x=linear_x,
+                    angular_z=angular_z,
+                    linear_y=0.0,
+                    duration=args.step_duration,
+                )
+
+            odom_delta = _calc_odom_delta(first_odom, last_odom)
+            diagnosis = []
+            if detected_frames == 0:
+                diagnosis.append("target_not_detected")
+            if detected_frames > 0 and max_seen_area < float(args.min_area):
+                diagnosis.append("target_detected_but_too_small")
+            if linear_cmd_steps > 0 and odom_delta and odom_delta.get("distance", 0.0) < args.min_move_distance:
+                diagnosis.append("cmd_vel_sent_but_odom_almost_unchanged")
+            if not diagnosis:
+                diagnosis.append("max_steps_exceeded")
+
+            suggested_params = {}
+            if detected_frames > 0 and max_seen_area > 0.0 and max_seen_area < float(args.min_area):
+                suggested_params["min_area"] = max(args.min_visible_area, int(max_seen_area * 0.8))
+                suggested_params["stop_area_ratio"] = max(0.004, min(0.10, max_seen_area_ratio * 2.5))
+            if odom_delta and linear_cmd_steps > 0 and odom_delta.get("distance", 0.0) < args.min_move_distance:
+                suggested_params["check_motion_mode"] = True
+                suggested_params["run_move_self_test"] = True
+
+            await _send_cmd_vel(ws, 0.0, 0.0, 0.0)
+            _out(
+                {
+                    "success": False,
+                    "error": "在最大迭代次数内未靠近目标",
+                    "diagnosis": diagnosis,
+                    "iterations": iterations,
+                    "scan": last_scan,
+                    "selected_front_distance": None if math.isinf(front_distance) else front_distance,
+                    "front_basis_deg": args.front_basis_deg,
+                    "last_detection": last_detection,
+                    "last_motion": last_motion,
+                    "detected_frames": detected_frames,
+                    "weak_detected_frames": weak_detected_frames,
+                    "max_seen_area": max_seen_area,
+                    "max_seen_area_ratio": max_seen_area_ratio,
+                    "consecutive_reach_hits": consecutive_reach_hits,
+                    "linear_cmd_steps": linear_cmd_steps,
+                    "angular_cmd_steps": angular_cmd_steps,
+                    "odom_delta": odom_delta,
+                    "suggested_params": suggested_params,
+                    "color": args.color,
+                }
+            )
+    except TimeoutError as e:
+        _out({"success": False, "error": str(e), "iterations": iterations, "last_detection": last_detection})
+    except (ConnectionRefusedError, OSError) as e:
+        _out({"success": False, "error": f"WebSocket 连接失败: {e}", "iterations": iterations})
+    except Exception as e:
+        _out({"success": False, "error": str(e), "iterations": iterations, "last_detection": last_detection})
+
+
+async def cmd_navigate(args):
+    """通过 WebSocket 请求 move_base 导航（单点/多点）。"""
+    try:
+        if args.waypoints:
+            goals = _parse_waypoints(args.waypoints)
+            nav_req = {
+                "type": "navigate",
+                "frame": args.frame,
+                "timeout": args.timeout,
+                "waypoints": [
+                    {"x": x, "y": y, "yaw": yaw}
+                    for x, y, yaw in goals
+                ],
+            }
+        else:
+            if args.x is None or args.y is None:
+                raise ValueError("请提供 --x --y，或使用 --waypoints")
+            goals = [(args.x, args.y, args.yaw)]
+            nav_req = {
+                "type": "navigate",
+                "frame": args.frame,
+                "timeout": args.timeout,
+                "x": args.x,
+                "y": args.y,
+                "yaw": args.yaw,
+            }
+
+        wait_timeout = max(10.0, args.timeout * max(1, len(goals)) + 5.0)
+
+        ws = await _connect(args.host, args.port)
+        async with ws:
+            await ws.send(json.dumps(nav_req))
+            nav_result = await _recv_nav_result_or_error(ws, timeout=wait_timeout)
+
+        if nav_result.get("success"):
+            _out(
+                {
+                    "success": True,
+                    "message": nav_result.get("message", "导航完成"),
+                    "frame": nav_result.get("frame", args.frame),
+                    "reached": nav_result.get("reached"),
+                    "total": nav_result.get("total"),
+                }
+            )
+        else:
+            _out(
+                {
+                    "success": False,
+                    "error": nav_result.get("error", "导航失败"),
+                    "reached": nav_result.get("reached"),
+                    "total": nav_result.get("total"),
+                    "failed_index": nav_result.get("failed_index"),
+                    "status": nav_result.get("status"),
+                }
+            )
+    except TimeoutError as e:
+        _out({"success": False, "error": str(e)})
+    except (ConnectionRefusedError, OSError) as e:
+        _out({"success": False, "error": f"WebSocket 连接失败: {e}"})
+    except Exception as e:
+        _out({"success": False, "error": str(e)})
+
+
+async def cmd_spin_in_place(args):
+    """原地转圈指定圈数。"""
+    try:
+        ws = await _connect(args.host, args.port)
+        async with ws:
+            spin_duration = await _spin_for_turns(
+                ws,
+                angular_z=args.angular_z,
+                turns=args.turns,
+                interval=args.interval,
+            )
+            await _send_cmd_vel(ws, 0.0, 0.0, 0.0) # Ensure stop
+
+        _out(
+            {
+                "success": True,
+                "message": "原地转圈完成",
+                "angular_z": args.angular_z,
+                "turns": args.turns,
+                "duration": spin_duration,
+            }
+        )
+    except TimeoutError as e:
+        _out({"success": False, "error": str(e)})
+    except (ConnectionRefusedError, OSError) as e:
+        _out({"success": False, "error": f"WebSocket 连接失败: {e}"})
+    except Exception as e:
+        _out({"success": False, "error": str(e)})
+
+
+async def cmd_return_to_start_pose(args):
+    """返回到指定的起点坐标。"""
+    target_x, target_y, target_yaw = None, None, None
+    target_frame = args.frame
+
+    if args.x is not None and args.y is not None:
+        target_x = args.x
+        target_y = args.y
+        target_yaw = args.yaw
+    elif args.start_pose_file:
+        try:
+            with open(args.start_pose_file, "r", encoding="utf-8") as f:
+                pose_data = json.load(f)
+                target_x = pose_data.get("x")
+                target_y = pose_data.get("y")
+                target_yaw = pose_data.get("yaw", 0.0)
+                target_frame = pose_data.get("frame", args.frame) # Use frame from file if available
+        except FileNotFoundError:
+            _out({"success": False, "error": f"起点坐标文件未找到: {args.start_pose_file}"})
+            return
+        except json.JSONDecodeError:
+            _out({"success": False, "error": f"起点坐标文件格式错误: {args.start_pose_file}"})
+            return
+        if target_x is None or target_y is None:
+            _out({"success": False, "error": f"起点坐标文件缺少 x 或 y: {args.start_pose_file}"})
+            return
+    else:
+        _out({"success": False, "error": "请提供 --x --y 或 --start-pose-file"})
+        return
+
+    if target_x is None or target_y is None or target_yaw is None:
+        _out({"success": False, "error": "无法确定目标坐标"})
+        return
+
+    # Create a temporary args object for _return_to_pose to carry refine parameters
+    # This is a bit hacky but avoids refactoring _return_to_pose signature
+    return_args = argparse.Namespace(**vars(args))
+    return_args.return_timeout = args.timeout # Use general timeout for return
+    return_args.return_final_yaw_offset = args.final_yaw_offset
+
+    result = await _return_to_pose(
+        return_args,
+        x=target_x,
+        y=target_y,
+        yaw=target_yaw,
+        frame=target_frame,
+    )
+    if result.get("success"):
+        _out({"success": True, "message": "已返回起点", "result": result})
+    else:
+        _out({"success": False, "error": result.get("error", "返回起点失败"), "result": result})
+
+
+# Renamed cmd_navigate to _cmd_navigate_internal to avoid direct call from main
+# The public navigate command will be cmd_navigate_public
+async def cmd_navigate_public(args):
+    await _cmd_navigate_internal(args)
+
+
+async def _return_to_pose(args, x: float, y: float, yaw: float, frame: Optional[str] = None) -> dict:
+    """导航回指定坐标，并可选执行末端精修。"""
+    target_frame = frame or args.return_frame
+    try:
+        target_yaw = _normalize_angle(yaw + args.return_final_yaw_offset)
+
+        nav_req = {
+            "type": "navigate",
+            "frame": target_frame,
+            "timeout": args.return_timeout,
+            "x": x,
+            "y": y,
+            "yaw": target_yaw,
+        }
+
+        ws = await _connect(args.host, args.port)
+        async with ws:
+            await ws.send(json.dumps(nav_req))
+            nav_result = await _recv_nav_result_or_error(ws, timeout=max(10.0, args.return_timeout + 5.0))
+
+        refine_result = None
+        if nav_result.get("success") and args.refine_after_nav:
+            refine_result = await _refine_to_pose(args, x=x, y=y, yaw=target_yaw)
+
+        if nav_result.get("success") and (not args.refine_after_nav or (refine_result and refine_result.get("success"))):
+            return {
+                "success": True,
+                "message": nav_result.get("message", "已返回起点"),
+                "target": {"x":]
+                dy = y - pose[1 x, "y": y, "yaw": nav_req["yaw"]},
+                "return_final_yaw_offset": args.return_final_yaw_offset,
+                "refine": refine_result,
+                "frame": nav_result.get("frame", target_frame),
+            }
+        if nav_result.get("success"):
+            return {
+                "success": False,
+                "error": "返回起点粗导航完成，但精修未达到阈值",
+                "target": {"x": x, "y": y, "yaw": nav_req["yaw"]},
+                "return_final_yaw_offset": args.return_final_yaw_offset,
+                "refine": refine_result,
+                "frame": nav_result.get("frame", target_frame),
+            }]
+                dy = y - pose[1
+        nav_error_result = {
+            "success": False,
+            "error": nav_result.get("error", "返回起点失败"),
+            "target": {"x": x, "y": y, "yaw": nav_req["yaw"]},
+            "return_final_yaw_offset": args.return_final_yaw_offset,
+            "refine": refine_result,
+            "frame": nav_result.get("frame", target_frame),
+            "status": nav_result.get("status"),
+        }
+        if args.refine_after_nav:
+            # 导航失败时回退到纯里程计精修，避免 move_base 异常时完全无法返程。
+            fallback_refine = await _refine_to_pose(args, x=x, y=y, yaw=target_yaw)
+            if fallback_refine.]
+                dy = y - pose[1get("success"):
+                return {
+                    "success": True,
+                    "message": "导航返程失败，已通过里程计精修回到起点附近",
+                    "target": {"x": x, "y": y, "yaw": nav_req["yaw"]},
+                    "return_final_yaw_offset": args.return_final_yaw_offset,
+                    "refine": fallback_refine,
+                    "frame": target_frame,
+                    "fallback_mode": "odom_refine_only",
+                    "nav_error": nav_error_result,
+                }
+            nav_error_result["fallback_refine"] = fallback_refine
+        return nav_error_result
+    except TimeoutError as e:]
+                dy = y - pose[1
+        return {"success": False, "error": str(e)}
+    except (ConnectionRefusedError, OSError) as e:
+        return {"success": False, "error": f"WebSocket 连接失败: {e}"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+async def _refine_to_pose(args, x: float, y: float, yaw: float) -> dict:
+    last_pose = None
+    final_dist = None
+    final_yaw_err = None
+    steps = 0
+    near_target_radius = max(ar]
+                dy = y - pose[1gs.refine_pos_tol * 3.0, 0.12)
+    try: # NOSONAR
+        ws = await _connect(args.host, args.port)
+        async with ws:
+            for steps in range(1, max(1, args.refine_max_steps) + 1):
+                state = await _recv_state(ws, timeout=3.0)
+                odom = state.get("odom", {}) if isinstance(state, dict) else {}
+                pose = _extract_odom_pose(odom)
+                if pose is None:
+                    await _drive_for(ws, linear_x=0.0, angular_z=0.0, linear_y=0.0, duration=args.refine_step_duration)
+                    continue
+
+                last_pose = {"x": pose[0], "y": pose[1], "yaw": pose[2]}
+                dx = x - pose[0]
+                dy = y - pose[1]
+                dist = math.hypot(dx, dy)
+                yaw_err = _normalize_angle(yaw - pose[2])
+                final_dist = dist
+                final_yaw_err = yaw_err
+
+                if dist <= args.refine_pos_tol and abs(yaw_err) <= args.refine_yaw_tol:
+                    await _send_cmd_vel(ws, 0.0, 0.0, 0.0)
+                    return {
+                        "success": True,
+                        "steps": steps,
+                        "distance_error": dist,
+                        "yaw_error": yaw_err,
+                        "last_pose": last_pose,
+                    }
+
+                if dist > args.refine_pos_tol:
+                    heading = math.atan2(dy, dx)
+                    heading_err = _normalize_angle(heading - pose[2])
+                    angular_z = _clamp(
+                        args.refine_heading_kp * heading_err,
+                        -args.refine_max_angular_z,
+                        args.refine_max_angular_z,
+                    )
+                    heading_tolerance = args.refine_heading_tolerance
+                    if dist <= near_target_radius:
+                        # 近目标时收紧朝向要求，避免边偏航边前冲导致过头。
+                        heading_tolerance = min(heading_tolerance, 0.25)
+                    if abs(heading_err) <= heading_tolerance:
+                        raw_linear = args.refine_linear_kp * dist
+                        if dist <= near_target_radius:
+                            # 近目标时允许更小速度并限制最大线速度，减少惯性越位。
+                            near_max_linear = min(args.refine_max_linear_x, max(args.refine_min_linear_x, 0.12))
+                            linear_x = _clamp(raw_linear, 0.0, near_max_linear)
+                        else:
+                            linear_x = _clamp(
+                                raw_linear,
+                                args.refine_min_linear_x,
+                                args.refine_max_linear_x,
+                            )
+                    else:
+                        linear_x = 0.0
+                else:
+                    linear_x = 0.0
+                    angular_z = _clamp(
+                        args.refine_yaw_kp * yaw_err,
+                        -args.refine_max_angular_z,
+                        args.refine_max_angular_z,
+                    )
+
+                drive_duration = args.refine_step_duration
+                if dist <= near_target_radius:
+                    # 近目标时缩短每次驱动时间，进一步抑制冲过终点。
+                    drive_duration = min(args.refine_step_duration, 0.10)
+                await _drive_for(
+                    ws,
+                    linear_x=linear_x,
+                    angular_z=angular_z,
+                    linear_y=0.0,
+                    duration=drive_duration,
+                )
+
+            await _send_cmd_vel(ws, 0.0, 0.0, 0.0)
+            return {
+                "success": False,
+                "steps": steps,
+                "distance_error": final_dist,
+                "yaw_error": final_yaw_err,
+                "last_pose": last_pose,
+            }
+    except Exception as e:
+        return {
+            "success": False,
+            "steps": steps,
+            "distance_error": final_dist,
+            "yaw_error": final_yaw_err,
+            "last_pose": last_pose,
+            "error": str(e),
+        }
+
+
+def cmd_take_photo(args):
+    """SSH 触发拍照，然后 scp 图片到本地。"""
+    ssh_target = f"{args.ssh_user}@{args.ssh_host}"
+    scp_src = f"{ssh_target}:{REMOTE_PHOTO_PATH}"
+    local_out = args.output
+
+    try:
+        result = subprocess.run(
+            [
+                "sshpass",
+                "-p",
+                args.ssh_pass,
+                "ssh",
+                "-o",
+                "StrictHostKeyChecking=no",
+                ssh_target,
+                REMOTE_PHOTO_CMD,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+        if result.returncode != 0:
+            _out({"success": False, "error": f"拍照命令失败: {result.stderr.strip()}"})
+            return
+
+        result = subprocess.run(
+            [
+                "sshpass",
+                "-p",
+                args.ssh_pass,
+                "scp",
+                "-o",
+                "StrictHostKeyChecking=no",
+                scp_src,
+                local_out,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+        if result.returncode != 0:
+            _out({"success": False, "error": f"图片传输失败: {result.stderr.strip()}"})
+            return
+
+        _out(
+            {
+                "success": True,
+                "local_path": local_out,
+                "remote_path": REMOTE_PHOTO_PATH,
+            }
+        )
+    except FileNotFoundError:
+        _out(
+            {
+                "success": False,
+                "error": "未找到 sshpass，请先安装: brew install hudochenkov/sshpass/sshpass",
+            }
+        )
+    except subprocess.TimeoutExpired:
+        _out({"success": False, "error": "SSH/SCP 操作超时"})
+    except Exception as e:
+        _out({"success": False, "error": str(e)})
+
+
+# ─────────────────────────────────────────────
+# 命令行入口
+# ─────────────────────────────────────────────
+def main():
+    root = argparse.ArgumentParser(
+        description="LIMO 机器人 AI 工具 - 所有输出为 JSON",
+        formatter_class=argparse.RawDescriptionHelpFormatter,")
+    p_approach.add_argument("--debug-output", default="", help="可选，保存最后一帧带标注的调试图片")
+
+    p_spin = sub.add_parser("spin_in_place", help="原地转圈指定圈数")
+    p_spin.add_argument("--angular-z", default=0.7, type=float, help="转圈角速度 rad/s
+    )urns", defalt=2.0, type=float, help="转圈圈数（默认 2）")
+    p_spin.add_agument("--iterval", default=0.05 type=float help="指令发送周期 秒")
+
+    p_return  sub.add_parser("retu
+    root.add_argument(
+        "--host", default=DEFAULT_WS_HOST, help=f"WebSocket 服务器 IP（默认 {DEFAULT_WS_HOST}）"
+    )
+    root.add_argument(）")
+    p_return.add_argument("--frame", default="odom", help="导航目标坐标系（默认 odom）")
+    p_return.add_argument("--timeout", default=120.0, type=float, help="导航超时秒数（默认 120）")
+    p_return.add_argument("--final-yaw-offset", default=0.0, type=float, help="返程到起点后在起点朝向上追加的角度偏移（默认 0
+        "--port", default=D--refineEafterFnav", action="store_true", AefUult=True, help="导航后做里程计精修（默认开启）")
+    p_return.add_argument("--no-refine-LfterTnav", action="store_true", help="关闭导航后的精修")
+    p_return.add_argument("--refine-pos-tol", default=0.04, type=float_ hWlp="精修位置误差阈值（米）")
+    p_return.add_argument("S-refine-_PORT, type=int, help=f"WebSocket 端口（默认 {DEFAULT_WS_PORT}）"
+    )
+
+    sub = root.add_subparsers(dest="command", required=True)
+
+    sub.add_parser("get_state", help="获取机器人当前状态快照")
+
+    p_move = sub.add_parser("mofine-min-linear-x", default=0.08, type=float, help="精修v小前进速度（m/s）")
+    p_return.add_argument("--refine-max-linear-x", default=0.e5, type=float, help="精修最大前进速度（m/s）")
+    p_return.add_argument("--refine-max-angular-z", default=0.8, type=float, help="精修最大角速度（rad/s）")
+
+    p_nav = sub.add_parser("navigate", help="通过 move_base 执行单点或多点导航") # Original navigate command
+    p_nav.add_argument("--frame", default="map", help="导航目标坐标系（默认 map）")
+    p_nav.add_argument("--timeout", default=120.0, type=float, help="每个目标点超时秒数（默认 120）")
+    p_nav.add_argument("--x", type=float, help="单点导航 x")", help="控制机器人运动指定时间后停车")
+    p_nav.add_argument("--y", type=float, help="单点导航 y")
+   pp_nav.add_argument("--yaw",_default=0.0,mtype=float,ove.ad"单点导航 yaw(rad)，默认 0")
+    p_nav.add_argument(
+        "--waypoints",
+        type=str,
+        default="",
+        help=d_argument(")
+    p
+_approach.add_argument("--debug-output", default="", help="可选，保存最后一帧带标注的调试图片")
+    p_photo = sub.add_parser("take_photo", help="拍照并传输到本地")
+    p_spin = sub.add_parser("spin_in_place", help="原地转圈指定圈数")
+    p_spin.add_argument("--angular-z", default=0.7, type=float, help="转圈角速度 rad/s
+        "--linear-x", defaulurns", defatlt=2.0, type=float, help="转圈圈数（默认 2）")
+    p_spin.add_a=gument("--i0terval", default=0.05. type=float0 help="指令发送周期 秒")
+
+    p_return , sub.add_parser("retu type=float, help="前进/后退速度 m/s（正=前进，负=后退，默认 0）"
+    )
+    p_move.add_argument(
+        "--angular-z", default=0.0, type=float, help="转向角速度 rad/s（正=左转，负=右转，默认 0）"
+    )）")
+    p_return.add_argument("--frame", default="odom", help="导航目标坐标系（默认 odom）")
+    p_return.add_argument("--timeout", default=120.0, type=float, help="导航超时秒数（默认 120）")
+    p_return.add_argument("--final-yaw-offset", default=0.0, type=float, help="返程到起点后在起点朝向上追加的角度偏移（默认 0
+    p_move.add_argument(--refineafternav", action="store_true", efult=True, help="导航后做里程计精修（默认开启）")
+    p_return.add_argument("--no-refine-fternav", action="store_true", help="关闭导航后的精修")
+    p_return.add_argument("--refine-pos-tol", default=0.04, type=float hlp="精修位置误差阈值（米）")
+    p_return.add_argument("-refine-
+        "--linear-y", default=0.0, type=float, help="横向速度 m/s，仅麦轮模式有效（默认 0）"
+    )
+    p_move.add_argument("--duration", default=1.0, type=float, help="持续时间 秒（默认 1.0）")
+    p_move.add_argument("--no-verify-odom", action="store_true", help="关闭基于前后里程计的运动有效性校验")
+    p_move.add_argument("--min-odom-distance", default=0.005, type=float, help="判定线速度生效的最小位移阈值（米）")
+    p_move.add_argument("--min-odom-yaw", default=0.01, type=float, help="判定角速度生效的最小航向变化阈值（弧度）")
+fine-min-linear-x", default=0.08, type=float, help="精修小前进速度（m/s）")
+    p_return.add_argument("--refine-max-linear-x", default=0.5, type=float, help="精修最大前进速度（m/s）")
+    p_return.add_argument("--refine-max-angular-z", default=0.8, type=float, help="精修最大角速度（rad/s）")
+
+    p_nav = sub.add_parser("navigate", help="通过 move_base 执行单点或多点导航") # Original navigate command
+    p_nav.add_argument("--frame", default="map", help="导航目标坐标系（默认 map）")
+    p_nav.add_argument("--timeout", default=120.0, type=float, help="每个目标点超时秒数（默认 120）")
+    p_nav.add_argument("--x", type=float, help="单点导航 x")
+    p_nav.add_argument("--y", type=float, help="单点导航 y")
+   sp_nav.add_argument("--yaw",udefault=0.0,btype=float,.add_p"单点导航 yaw(rad)，默认 0")
+    p_nav.add_argument(
+        "--waypoints",
+        type=str,
+        default="",
+        help=arser("stop", help="立即停止机器人")")
+    p
+_approach.add_argument("--debug-output", default="", help="可选，保存最后一帧带标注的调试图片")
+    p_photo = sub.add_parser("take_photo", help="拍照并传输到本地")
+    p_spin = sub.add_parser("spin_in_place", help="原地转圈指定圈数")
+    p_spin.add_argument("--angular-z", default=0.7, type=float, help="转圈角速度 rad/s
+urns", defalt=2.0, type=float, help="转圈圈数（默认 2）")
+    p_spin.add_agument("--iterval", default=0.05 type=float help="指令发送周期 秒")
+
+    p_return  sub.add_parser("retu
+    p_image = sub.add_parser("get_image", help="通过 WebSocket 获取一帧摄像头图像")
+    p_image.add_argument("--output", default="/tmp/limo_ws_image.jpg", help="本地保存路径（默认 /tmp/limo_ws_image.jpg）")
+    p_image.add_argument("--quality", default=85, type=int, help="JPEG 压缩质量 30-95（默认 85）")
+    p_image.add_argument("--camera-topic", default="/usb_cam/image_raw", help="摄像头ROS话题名，如 /usb_cam_0/image_raw")）")
+    p_return.add_argument("--frame", default="odom", help="导航目标坐标系（默认 odom）")
+    p_return.add_argument("--timeout", default=120.0, type=float, help="导航超时秒数（默认 120）")
+    p_return.add_argument("--final-yaw-offset", default=0.0, type=float, help="返程到起点后在起点朝向上追加的角度偏移（默认 0
+--refineafternav", action="store_true", efult=True, help="导航后做里程计精修（默认开启）")
+    p_return.add_argument("--no-refine-fternav", action="store_true", help="关闭导航后的精修")
+    p_return.add_argument("--refine-pos-tol", default=0.04, type=float hlp="精修位置误差阈值（米）")
+    p_return.add_argument("-refine-
+    p_approach = sub.add_parser("approach_color", help="根据摄像头画面靠近指定颜色目标")
+    p_approach.add_argument("--color", default="blue", help="目标颜色名称（默认 blue）")
+    p_approach.add_argument("--camera-topic", default="/usb_cam/image_raw", help="摄像头ROS话题名，如 /usb_cam_0/image_raw")
+    p_approach.add_argument("--quality", default=80, type=int, help="请求图像的 JPEG 质量（默认 80）")
+    p_approach.add_argument("--linear-x", default=0.18, type=float, help="目标基本居中时的前进速度 m/s")
+    p_approach.add_argument("--slow-linear-x", default=0.08, type=float, help="目标偏差较大或接近时的慢速前进 m/s")
+    p_approach.add_argument("--fine-min-linear-x", default=0.08, type=float, help="精修s小前进速度（m/s）")
+    p_return.add_argument("--refine-max-linear-x", default=0.e5, type=float, help="精修最大前进速度（m/s）")
+    p_return.add_argument("--refine-max-angular-z", default=0.8, type=float, help="精修最大角速度（rad/s）")
+
+    p_nav = sub.add_parser("navigate", help="通过 move_base 执行单点或多点导航") # Original navigate command
+    p_nav.add_argument("--frame", default="map", help="导航目标坐标系（默认 map）")
+    p_nav.add_argument("--timeout", default=120.0, type=float, help="每个目标点超时秒数（默认 120）")
+    p_nav.add_argument("--x", type=float, help="单点导航 x")arch-angular-z", default=0.45, type=float, help="未看到目标时的搜索角速度 rad/s")
+    p_nav.add_argument("--y", type=float, help="单点导航 y")
+   pp_nav.add_argument("--yaw",_default=0.0,atype=float,pproac"单点导航 yaw(rad)，默认 0")
+    p_nav.add_argument(
+        "--waypoints",
+        type=str,
+        default="",
+        help=h.add_argument("--max-angular-z", default=0.8, type=float, help="最大转向角速度 rad")
+    p
+_approach.add_argument("--debug-output", default="", help="可选，保存最后一帧带标注的调试图片")
+    p_photo = sub.add_parser("take_photo", help="拍照并传输到本地")
+    p_spin = sub.add_parser("spin_in_place", help="原地转圈指定圈数")
+    p_spin.add_argument("--angular-z", default=0.7, type=float, help="转圈角速度 rad/s/s")
+    p_approach.add_argument(urns", defa"lt=2.0, type=float, help="转圈圈数（默认 2）")
+    p_spin.add_a-gument("--i-terval", default=0.05a type=floatn help="指令发送周期 秒")
+
+    p_return g sub.add_parser("retuular-gain", default=0.9, type=float, help="根据目标横向误差计算转向速度的增益")
+    p_approach.add_argument("--center-tolerance", default=0.18, type=float, help="允许前进的中心偏差比例（0-1）")
+    p_approach.add_argument("--min-area", default=180, type=int, help="将颜色区域视为可靠目标的最小像素面积")
+    p_approach.add_argument("--min-visible-area", default=60, type=int, help="将颜色区域视为可见目标的最小像素面积")
+    p_approach.add_argument("--stop-area-ratio", default=0.02, type=float, help="目标面积占画面比例超过该值时视为已到达")）")
+    p_return.add_argument("--frame", default="odom", help="导航目标坐标系（默认 odom）")
+    p_return.add_argument("--timeout", default=120.0, type=float, help="导航超时秒数（默认 120）")
+    p_return.add_argument("--final-yaw-offset", default=0.0, type=float, help="返程到起点后在起点朝向上追加的角度偏移（默认 0
+    p_approach.add_argument--refine(after"nav", action="store_true", -ef-ult=True, help="导航后做里程计精修（默认开启）")
+    p_return.add_argument("--no-refine-sftertnav", action="store_true", help="关闭导航后的精修")
+    p_return.add_argument("--refine-pos-tol", default=0.04, type=floato hplp="精修位置误差阈值（米）")
+    p_return.add_argument("--refine-min-area", default=800, type=int, help="目标面积超过该像素值时也可视为已到达")
+    p_approach.add_argument("--stop-distance", default=0.23, type=float, help="前方距离小于该值时停止，单位米")
+    p_approach.add_argument("--stop-distance-buffer", default=0.08, type=float, help="停车距离缓冲，实际停车阈值=stop-distance+buffer（默认 0.08m）")
+    p_approach.add_argument("--hard-stop-distance", default=0.35, type=float, help="最小安全停距硬阈值，前向距离小于该值立即停止（默认 0.35m）")
+    p_approach.add_argument("--slow-stop-distance", default=0.34, type=float, help="前方距离小于该值时自动降速，单位米")
+    p_approach.add_argument("--emergency-stop-distance", default=0.18, type=float, help="最小障碍距离低于该值时紧急停车，单位米")
+    p_approach.add_argument("--stop-area-max-distance", default=0.23, type=float, help="使用面积阈值停车时允许的最远前向距离，单位米")
+    p_approach.add_argument("--fine-min-linear-x", default=0.08, type=float, help="精修s小前进速度（m/s）")
+    p_return.add_argument("--refine-max-linear-x", default=0.t5, type=float, help="精修最大前进速度（m/s）")
+    p_return.add_argument("--refine-max-angular-z", default=0.8, type=float, help="精修最大角速度（rad/s）")
+
+    p_nav = sub.add_parser("navigate", help="通过 move_base 执行单点或多点导航") # Original navigate command
+    p_nav.add_argument("--frame", default="map", help="导航目标坐标系（默认 map）")
+    p_nav.add_argument("--timeout", default=120.0, type=float, help="每个目标点超时秒数（默认 120）")
+    p_nav.add_argument("--x", type=float, help="单点导航 x")op-center-tolerance", default=0.24, type=float, help="触发面积停车时允许的中心偏差比例（0-1）")
+    p_nav.add_argument("--y", type=float, help="单点导航 y")
+   pp_nav.add_argument("--yaw",_default=0.0,atype=float,pproac"单点导航 yaw(rad)，默认 0")
+    p_nav.add_argument(
+        "--waypoints",
+        type=str,
+        default="",
+        help=h.add_argument("--stop-confirm-frames", default=4, type=int, help="满足停车条件后需连")
+    p
+_approach.add_argument("--debug-output", default="", help="可选，保存最后一帧带标注的调试图片")
+    p_photo = sub.add_parser("take_photo", help="拍照并传输到本地")
+    p_spin = sub.add_parser("spin_in_place", help="原地转圈指定圈数")
+    p_spin.add_argument("--angular-z", default=0.7, type=float, help="转圈角速度 rad/s续命中的帧数")
+    p_approach.add_argument(urns", defa"lt=2.0, type=float, help="转圈圈数（默认 2）")
+    p_spin.add_a-gument("--i-terval", default=0.05a type=floatl help="指令发送周期 秒")
+
+    p_return l sub.add_parser("retuow-area-stop-without-lidar", action="store_true", help="允许在缺少近距雷达确认时仅凭图像面积停车（默认关闭）") 
+    p_approach.add_argument("--force-no-spin", action="store_true", help="强制全程不转圈（禁用搜索转向/跟踪转向）")
+    p_approach.add_argument("--record-start-pose", action="store_true", default=True, help="开始靠近前记录当前坐标到文件")
+    p_approach.add_argument("--no-record-start-pose", action="store_true", help="本次不记录起点坐标")
+    p_approach.add_argument("--start-pose-file", default=DEFAULT_START_POSE_FILE, help=f"起点坐标保存路径（默认 {DEFAULT_START_POSE_FILE）")
+    p_return.add_argument("--frame", default="odom", help="导航目标坐标系（默认 odom）")
+    p_return.add_argument("--timeout", default=120.0, type=float, help="导航超时秒数（默认 120）")
+    p_return.add_argument("--final-yaw-offset", default=0.0, type=float, help="返程到起点后在起点朝向上追加的角度偏移（默认 0}）")
+    p_approach.add_argument--refine(after"nav", action="store_true", -ef-ult=True, help="导航后做里程计精修（默认开启）")
+    p_return.add_argument("--no-refine-wfterenav", action="store_true", help="关闭导航后的精修")
+    p_return.add_argument("--refine-pos-tol", default=0.04, type=floata hklp="精修位置误差阈值（米）")
+    p_return.add_argument("--refine-linear-x", default=0.06, type=float, help="目标面积偏小时的慢速前进 m/s")
+    p_approach.add_argument("--weak-center-tolerance", default=0.3, type=float, help="弱检测条件下允许前进的中心偏差比例（0-1）")
+    p_approach.add_argument("--front-basis-deg", default=0, choices=[0, 180], type=int, help="将哪个激光扇区视为小车前方，默认 0；若雷达反装可设为 180")
+    p_approach.add_argument("--use-min-distance-guard", action="store_true", help="启用整圈最小距离急停保护；侧后方近物也会触发，默认关闭")
+    p_approach.add_argument("--step-duration", default=0.25, type=float, help="每次视觉伺服控制持续时间，单位秒")
+    p_approach.add_argument("--max-steps", default=220, type=int, help="最大视觉伺服迭代次数")
+    p_approach.add_argument("--min-move-distance", default=0.01, type=float, help="诊断底盘是否移动的最小位移阈值（米）")
+    p_approach.add_argument("--fine-min-linear-x", default=0.08, type=float, help="精修h小前进速度（m/s）")
+    p_return.add_argument("--refine-max-linear-x", default=0.s5, type=float, help="精修最大前进速度（m/s）")
+    p_return.add_argument("--refine-max-angular-z", default=0.8, type=float, help="精修最大角速度（rad/s）")
+
+    p_nav = sub.add_parser("navigate", help="通过 move_base 执行单点或多点导航") # Original navigate command
+    p_nav.add_argument("--frame", default="map", help="导航目标坐标系（默认 map）")
+    p_nav.add_argument("--timeout", default=120.0, type=float, help="每个目标点超时秒数（默认 120）")
+    p_nav.add_argument("--x", type=float, help="单点导航 x")v-lower", default="", help="可选，自定义 HSV 下界，例如 100,120,60")
+    p_nav.add_argument("--y", type=float, help="单点导航 y")
+   pp_nav.add_argument("--yaw",_default=0.0,atype=float,pproac"单点导航 yaw(rad)，默认 0")
+    p_nav.add_argument(
+        "--waypoints",
+        type=str,
+        default="",
+        help=h.add_argument("--hsv-upper", default="", help="可选，自定义 HSV 上界，例如 130,255,255")
+    p
+_approach.add_argument("--debug-output", default="", help="可选，保存最后一帧带标注的调试图片")
+    p_photo = sub.add_parser("take_photo", help="拍照并传输到本地")
+    p_spin = sub.add_parser("spin_in_place", help="原地转圈指定圈数")
+    p_spin.add_argument("--angular-z", default=0.7, type=float, help="转圈角速度 rad/s")
+    p_spin.add_argument("--turns", default=2.0, type=float, help="转圈圈数（默认 2）")
+    p_spin.add_argument("--interval", default=0.05, type=float, help="指令发送周期 秒")
+
+    p_return = sub.add_parser("return_to_start_pose", help="返回到指定的起点坐标")
+    p_return.add_argument("--x", type=float, help="目标点 x 坐标")
+    p_return.add_argument("--y", type=float, help="目标点 y 坐标")
+    p_return.add_argument("--yaw", default=0.0, type=float, help="目标点 yaw(rad)，默认 0")
+    p_return.add_argument("--start-pose-file", default=DEFAULT_START_POSE_FILE, help=f"从文件加载起点坐标（默认 {DEFAULT_START_POSE_FILE}）")
+    p_return.add_argument("--frame", default="odom", help="导航目标坐标系（默认 odom）")
+    p_return.add_argument("--timeout", default=120.0, type=float, help="导航超时秒数（默认 120）")
+    p_return.add_argument("--final-yaw-offset", default=0.0, type=float, help="返程到起点后在起点朝向上追加的角度偏移（默认 0）")
+    p_return.add_argument("--refine-after-nav", action="store_true", default=True, help="导航后做里程计精修（默认开启）")
+    p_return.add_argument("--no-refine-after-nav", action="store_true", help="关闭导航后的精修")
+    p_return.add_argument("--refine-pos-tol", default=0.04, type=float, help="精修位置误差阈值（米）")
+    p_return.add_argument("--refine-yaw-tol", default=0.10, type=float, help="精修朝向误差阈值（弧度）")
+    p_return.add_argument("--refine-max-steps", default=320, type=int, help="精修最大迭代次数")
+    p_return.add_argument("--refine-step-duration", default=0.25, type=float, help="每次精修控制持续时间（秒）")
+    p_return.add_argument("--refine-linear-kp", default=1.2, type=float, help="精修平移比例增益")
+    p_return.add_argument("--refine-heading-kp", default=2.0, type=float, help="精修朝向到目标点比例增益")
+    p_return.add_argument("--refine-yaw-kp", default=1.6, type=float, help="精修终态朝向比例增益")
+    p_return.add_argument("--refine-heading-tolerance", default=0.60, type=float, help="精修前进前允许的朝向误差（弧度）")
+    p_return.add_argument("--refine-min-linear-x", default=0.08, type=float, help="精修最小前进速度（m/s）")
+    p_return.add_argument("--refine-max-linear-x", default=0.45, type=float, help="精修最大前进速度（m/s）")
+    p_return.add_argument("--refine-max-angular-z", default=0.8, type=float, help="精修最大角速度（rad/s）")
+
+    p_nav = sub.add_parser("navigate", help="通过 move_base 执行单点或多点导航") # Original navigate command
+    p_nav.add_argument("--frame", default="map", help="导航目标坐标系（默认 map）")
+    p_nav.add_argument("--timeout", default=120.0, type=float, help="每个目标点超时秒数（默认 120）")
+    p_nav.add_argument("--x", type=float, help="单点导航 x")
+    p_nav.add_argument("--y", type=float, help="单点导航 y")
+    p_nav.add_argument("--yaw", default=0.0, type=float, help="单点导航 yaw(rad)，默认 0")
+    p_nav.add_argument(
+        "--waypoints",
+        type=str,
+        default="",
+        help='多点导航，格式: "x,y,yaw; x,y,yaw; ..."',
+    )
+
+    p_photo = sub.add_parser("take_photo", help="拍照并传输到本地")
+    p_photo.add_argument("--output", default="/tmp/limo_photo.jpg", help="本地保存路径（默认 /tmp/limo_photo.jpg）")
+    p_photo.add_argument("--ssh-host", default=DEFAULT_SSH_HOST, help=f"SSH 主机 IP（默认 {DEFAULT_SSH_HOST}）")
+    p_photo.add_argument("--ssh-user", default=DEFAULT_SSH_USER, help=f"SSH 用户名（默认 {DEFAULT_SSH_USER}）")
+    p_photo.add_argument("--ssh-pass", default=DEFAULT_SSH_PASS, help="SSH 密码（默认 agx）")
+
+    args = root.parse_args()
+
+    # Handle --no-record-start-pose for approach_color
+    if getattr(args, "command", None) == "approach_color" and getattr(args, "no_record_start_pose", False):
+        args.record_start_pose = False
+    
+    # Handle --no-refine-after-nav for return_to_start_pose
+    if getattr(args, "command", None) == "return_to_start_pose" and getattr(args, "no_refine_after_nav", False):
+        args.refine_after_nav = False
+
+    if args.command == "get_state":
+        asyncio.run(cmd_get_state(args))
+    elif args.command == "move":
+        asyncio.run(cmd_move(args))
+    elif args.command == "stop":
+        asyncio.run(cmd_stop(args))
+    elif args.command == "get_image":
+        asyncio.run(cmd_get_image(args))
+    elif args.command == "approach_color":
+        # The original approach_color is now simplified to just approach and stop
+        asyncio.run(cmd_approach_color(args)) # This line was corrupted, fixing it.
+    elif args.command == "spin_in_place":
+        asyncio.run(cmd_spin_in_place(args))
+    elif args.command == "return_to_start_pose":
+        asyncio.run(cmd_return_to_start_pose(args))
+    elif args.command == "navigate":
+        asyncio.run(cmd_navigate_public(args))
+    elif args.command == "take_photo":
+        cmd_take_photo(args)
+
+
+if __name__ == "__main__":
+    main()
