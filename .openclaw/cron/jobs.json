@@ -35,6 +35,42 @@
         "consecutiveErrors": 0,
         "lastDelivered": true
       }
+    },
+    {
+      "id": "26a41de4-e042-4661-b792-77544f3f8e3b",
+      "agentId": "wave-agent",
+      "name": "wave-agent 偶数分钟唤醒",
+      "enabled": false,
+      "createdAtMs": 1774162884678,
+      "updatedAtMs": 1774163873069,
+      "schedule": {
+        "kind": "cron",
+        "expr": "*/2 * * * *",
+        "tz": "Asia/Shanghai"
+      },
+      "sessionTarget": "isolated",
+      "wakeMode": "now",
+      "payload": {
+        "kind": "agentTurn",
+        "message": "检查酒馆情况。用 sessions_send 给用户 5867030229 发简短汇报（不超过100字）。channel: telegram, accountId: wave, to: \"5867030229\""
+      },
+      "delivery": {
+        "mode": "announce",
+        "channel": "telegram",
+        "to": "5867030229",
+        "accountId": "wave"
+      },
+      "state": {
+        "lastRunAtMs": 1774163845772,
+        "lastRunStatus": "error",
+        "lastStatus": "error",
+        "lastDurationMs": 27297,
+        "lastDelivered": true,
+        "lastDeliveryStatus": "delivered",
+        "consecutiveErrors": 4,
+        "lastErrorReason": "rate_limit",
+        "lastError": "⚠️ API rate limit reached. Please try again later."
+      }
     }
   ]
 }

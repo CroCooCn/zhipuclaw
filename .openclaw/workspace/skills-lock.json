@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "skills": {
+    "characteristic-voice": {
+      "source": "NoizAI/skills",
+      "sourceType": "github",
+      "computedHash": "519d6d8a92069eb9e05385a2902762457459981940f78d2ac679959c87749d0e"
+    },
+    "chat-with-anyone": {
+      "source": "NoizAI/skills",
+      "sourceType": "github",
+      "computedHash": "f83285c9d12d9129f95db037f5b1ff8b483a99bd565490f737170dfb00b89d44"
+    },
+    "daily-news-caster": {
+      "source": "NoizAI/skills",
+      "sourceType": "github",
+      "computedHash": "3377df9ebf1e4008e0cc8fad7c44eab0ee972509c632d1f04684cc8e3385f3de"
+    },
+    "template-skill": {
+      "source": "NoizAI/skills",
+      "sourceType": "github",
+      "computedHash": "91a0b031b0973e9bd8819b9f549edb52dc331b9cb87e030a9f806212d35fb12c"
+    },
+    "tts": {
+      "source": "NoizAI/skills",
+      "sourceType": "github",
+      "computedHash": "ccfb890d9f797a1316ca9d6528f9c240bc0a287a2c0cb09758b41d8a8a0e18df"
+    },
+    "video-translation": {
+      "source": "NoizAI/skills",
+      "sourceType": "github",
+      "computedHash": "46b88d4600eab0ef8be49946a8c0a3a2ab4565cb8086357ae63fb3720ba46ecb"
+    }
+  }
+}

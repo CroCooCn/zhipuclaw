@@ -1,7 +1,7 @@
 {
   "meta": {
     "lastTouchedVersion": "2026.3.13",
-    "lastTouchedAt": "2026-03-21T22:44:05.987Z"
+    "lastTouchedAt": "2026-03-22T07:55:09.721Z"
   },
   "wizard": {
     "lastRunAt": "2026-03-21T12:22:46.211Z",
@@ -152,17 +152,7 @@
       }
     }
   ],
-  "messages": {
-    "tts": {
-      "auto": "off",
-      "provider": "elevenlabs",
-      "elevenlabs": {
-        "apiKey": "sk_fbd320acd179a21ef8dedbba2ce3bbe172220e6de31c846a",
-        "voiceId": "pU9NaAwkoR3v0Mrg3uKz",
-        "modelId": "eleven_ttv_v3"
-      }
-    }
-  },
+  "messages": {},
   "commands": {
     "native": "auto",
     "nativeSkills": "auto",
@@ -219,15 +209,7 @@
       }
     }
   },
-  "talk": {
-    "provider": "elevenlabs",
-    "voiceId": "pU9NaAwkoR3v0Mrg3uKz",
-    "modelId": "eleven_ttv_v3",
-    "outputFormat": "mp3_44100_128",
-    "apiKey": "sk_fbd320acd179a21ef8dedbba2ce3bbe172220e6de31c846a",
-    "interruptOnSpeech": true,
-    "silenceTimeoutMs": 700
-  },
+
   "gateway": {
     "port": 18789,
     "mode": "local",

@@ -1,7 +1,7 @@
 {
   "meta": {
     "lastTouchedVersion": "2026.3.13",
-    "lastTouchedAt": "2026-03-21T21:13:46.555Z"
+    "lastTouchedAt": "2026-03-22T05:55:24.450Z"
   },
   "wizard": {
     "lastRunAt": "2026-03-21T12:22:46.211Z",
@@ -104,13 +104,68 @@
       },
       "workspace": "/home/userli/.openclaw/workspace",
       "typingMode": "never"
-    }
+    },
+    "list": [
+      {
+        "id": "main"
+      },
+      {
+        "id": "serve-agent",
+        "name": "serve-agent",
+        "workspace": "/home/userli/.openclaw/workspace-serve-agent",
+        "agentDir": "/home/userli/.openclaw/agents/serve-agent/agent",
+        "model": "zai/glm-5"
+      },
+      {
+        "id": "wave-agent",
+        "name": "wave-agent",
+        "workspace": "/home/userli/.openclaw/workspace-wave-agent",
+        "agentDir": "/home/userli/.openclaw/agents/wave-agent/agent",
+        "model": "zai/glm-5"
+      }
+    ]
   },
   "tools": {
     "profile": "coding",
     "agentToAgent": {
       "enabled": true,
-      "allow": ["main", "work", "family"]
+      "allow": [
+        "main",
+        "work",
+        "family"
+      ]
+    }
+  },
+  "bindings": [
+    {
+      "agentId": "serve-agent",
+      "match": {
+        "channel": "telegram",
+        "accountId": "serve"
+      }
+    },
+    {
+      "agentId": "wave-agent",
+      "match": {
+        "channel": "telegram",
+        "accountId": "wave"
+      }
+    }
+  ],
+  "messages": {
+    "tts": {
+      "auto": "always",
+      "provider": "openai",
+      "elevenlabs": {
+        "apiKey": "sk_fbd320acd179a21ef8dedbba2ce3bbe172220e6de31c846a",
+        "voiceId": "pU9NaAwkoR3v0Mrg3uKz",
+        "modelId": "eleven_ttv_v3"
+      },
+      "openai": {
+        "apiKey": "noiz-proxy",
+        "baseUrl": "http://127.0.0.1:18790/v1",
+        "model": "noiz"
+      }
     }
   },
   "commands": {
@@ -145,9 +200,28 @@
     "telegram": {
       "enabled": true,
       "dmPolicy": "pairing",
-      "botToken": "8698013401:AAFQLT_T5hZ4sWjYyUgB5ovKedSb0gEN3PY",
       "groupPolicy": "allowlist",
-      "streaming": "partial"
+      "streaming": "partial",
+      "accounts": {
+        "default": {
+          "dmPolicy": "pairing",
+          "botToken": "8698013401:AAFQLT_T5hZ4sWjYyUgB5ovKedSb0gEN3PY",
+          "groupPolicy": "allowlist",
+          "streaming": "partial"
+        },
+        "serve": {
+          "dmPolicy": "pairing",
+          "botToken": "8660563016:AAEr0Ox0-8Fpl_nHjoDphkFxFU0k8FBjmRI",
+          "groupPolicy": "allowlist",
+          "streaming": "partial"
+        },
+        "wave": {
+          "dmPolicy": "pairing",
+          "botToken": "8760018690:AAFeGrbQDDOkn9zFTNU1RlwWOJAKPUbKyGE",
+          "groupPolicy": "allowlist",
+          "streaming": "partial"
+        }
+      }
     }
   },
   "talk": {
@@ -158,17 +232,6 @@
     "apiKey": "sk_fbd320acd179a21ef8dedbba2ce3bbe172220e6de31c846a",
     "interruptOnSpeech": true,
     "silenceTimeoutMs": 700
-  },
-  "messages": {
-    "tts": {
-      "auto": "always",
-      "provider": "elevenlabs",
-      "elevenlabs": {
-        "voiceId": "pU9NaAwkoR3v0Mrg3uKz",
-        "modelId": "eleven_ttv_v3",
-        "apiKey": "sk_fbd320acd179a21ef8dedbba2ce3bbe172220e6de31c846a",
-      }
-    }
   },
   "gateway": {
     "port": 18789,

@@ -6,3 +6,6 @@
 {"timestamp":"2026-03-21T21:32:59.969Z","action":"new","sessionKey":"agent:main:telegram:direct:5867030229","senderId":"5867030229","source":"telegram"}
 {"timestamp":"2026-03-21T21:37:36.215Z","action":"new","sessionKey":"agent:main:telegram:direct:5867030229","senderId":"5867030229","source":"telegram"}
 {"timestamp":"2026-03-21T21:38:51.876Z","action":"new","sessionKey":"agent:main:telegram:direct:5867030229","senderId":"5867030229","source":"telegram"}
+{"timestamp":"2026-03-22T07:57:05.909Z","action":"new","sessionKey":"agent:main:main","senderId":"openclaw-control-ui","source":"webchat"}
+{"timestamp":"2026-03-22T08:04:29.988Z","action":"new","sessionKey":"agent:wave-agent:telegram:direct:5867030229","senderId":"5867030229","source":"telegram"}
+{"timestamp":"2026-03-22T08:20:19.159Z","action":"new","sessionKey":"agent:main:main","senderId":"openclaw-control-ui","source":"webchat"}

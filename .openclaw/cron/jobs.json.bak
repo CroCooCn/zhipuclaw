@@ -37,22 +37,58 @@
       }
     },
     {
-      "id": "907d22f4-eec0-49c6-9cd2-1b0f96e87977",
-      "agentId": "serve-agent",
-      "name": "serve-agent-call",
-      "enabled": true,
-      "deleteAfterRun": true,
-      "createdAtMs": 1774135394735,
-      "updatedAtMs": 1774135394735,
+      "id": "26a41de4-e042-4661-b792-77544f3f8e3b",
+      "agentId": "wave-agent",
+      "name": "wave-agent 偶数分钟唤醒",
+      "enabled": false,
+      "createdAtMs": 1774162884678,
+      "updatedAtMs": 1774163873069,
       "schedule": {
-        "kind": "at",
-        "at": "2026-03-21T23:23:42.891Z"
+        "kind": "cron",
+        "expr": "*/2 * * * *",
+        "tz": "Asia/Shanghai"
       },
       "sessionTarget": "isolated",
       "wakeMode": "now",
       "payload": {
         "kind": "agentTurn",
-        "message": "前台呼叫！顾客点酒了！"
+        "message": "检查酒馆情况。用 sessions_send 给用户 5867030229 发简短汇报（不超过100字）。channel: telegram, accountId: wave, to: \"5867030229\""
+      },
+      "delivery": {
+        "mode": "announce",
+        "channel": "telegram",
+        "to": "5867030229",
+        "accountId": "wave"
+      },
+      "state": {
+        "lastRunAtMs": 1774163845772,
+        "lastRunStatus": "error",
+        "lastStatus": "error",
+        "lastDurationMs": 27297,
+        "lastDelivered": true,
+        "lastDeliveryStatus": "delivered",
+        "consecutiveErrors": 4,
+        "lastErrorReason": "rate_limit",
+        "lastError": "⚠️ API rate limit reached. Please try again later."
+      }
+    },
+    {
+      "id": "15e3e059-e848-4942-88e7-2257bb8b6bad",
+      "agentId": "serve-agent",
+      "name": "serve-agent-call-3",
+      "enabled": true,
+      "deleteAfterRun": true,
+      "createdAtMs": 1774168317734,
+      "updatedAtMs": 1774168317734,
+      "schedule": {
+        "kind": "at",
+        "at": "2026-03-22T08:32:00.323Z"
+      },
+      "sessionTarget": "isolated",
+      "wakeMode": "now",
+      "payload": {
+        "kind": "agentTurn",
+        "message": "有位穿深色衣服、正在看手机的男顾客点酒啦，请招待他！"
       },
       "delivery": {
         "mode": "announce",
@@ -61,8 +97,8 @@
         "accountId": "serve"
       },
       "state": {
-        "nextRunAtMs": 1774135422891,
-        "runningAtMs": 1774135422891
+        "nextRunAtMs": 1774168320323,
+        "runningAtMs": 1774168320326
       }
     }
   ]

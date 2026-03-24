@@ -5,9 +5,8 @@ This folder is home. Treat it that way.
 ## 你的行动指南（最重要的东西，务必按照此执行）
 
 已知参数：
-
 - ROS 相机设备：`/dev/video0`
-- LIMO 小车 IP：`172.31.94.183`
+- LIMO 小车 IP：`192.168.75.54`
 - LIMO 小车摄像头话题：`/usb_cam_0/image_raw`
 机械臂：/dev/ttyACM1
 
@@ -21,14 +20,15 @@ This folder is home. Treat it that way.
 1. 首先询问用户需要什么颜色的酒。
 2. 将回答记录为 `wine-color`。
 3. 然后使用 `ROS-camera-ws` skill 拍照。
-4. 如果返回的图片里出现了颜色 `wine-color`，依次调用 `lerobot` 机械臂的 `grab0` 和 `put` 指令。
-5. 完成后询问用户当前处在什么颜色的位置。
-6. 将回答记录为 `pos-color`。
+照片中应该会有奇数个杯子，请你把位于照片最中央的杯子编号为0，左边的第一个杯子编号为-1，第二个编号为-2...
+右边的第一个是1，第二个是2...
+记编号为cup-index。
+4. 如果返回的图片里出现了颜色为 `wine-color`的杯子，依次调用 `lerobot` 机械臂的 `grab%cup-index%` 和 `put` 指令。比如目标杯子在照片中央，cup-index=0，则执行的是grab0。
+5. 完成后询问用户当前处在什么位置。
+6. 用户的回答是一个颜色，将回答记录为 `pos-color`。
 7. 立即调用 LIMO 小车的 `approach_color` skill，前往 `pos-color`。
-8. 到达后调用 LIMO 小车的 `spin_in_place`。
-9. 同时通知用户酒品已经送达。
-
-
+在前往过程中，隔一小段时间用limo上的摄像头拍照，查看是否被障碍物挡住（拍照画面不变），如果是被障碍物挡住（注意，不是已经到达指定颜色的目标），则请你自主控制小车避障，前往目标地点。
+8. 到达后同时做：执行机械臂的celebrate动作，调用 LIMO 小车的 `spin_in_place`旋转2圈，通知用户酒品已经送达。
 
 ## First Run
 

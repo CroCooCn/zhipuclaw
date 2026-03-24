@@ -18,7 +18,8 @@
             "cacheWrite": 0
           },
           "contextWindow": 204800,
-          "maxTokens": 131072
+          "maxTokens": 131072,
+          "api": "openai-completions"
         },
         {
           "id": "glm-4.7",
@@ -34,7 +35,8 @@
             "cacheWrite": 0
           },
           "contextWindow": 204800,
-          "maxTokens": 131072
+          "maxTokens": 131072,
+          "api": "openai-completions"
         },
         {
           "id": "glm-4.7-flash",
@@ -50,7 +52,8 @@
             "cacheWrite": 0
           },
           "contextWindow": 204800,
-          "maxTokens": 131072
+          "maxTokens": 131072,
+          "api": "openai-completions"
         },
         {
           "id": "glm-4.7-flashx",
@@ -66,10 +69,11 @@
             "cacheWrite": 0
           },
           "contextWindow": 204800,
-          "maxTokens": 131072
+          "maxTokens": 131072,
+          "api": "openai-completions"
         }
       ],
-      "apiKey": "34aaa68016e94fa8a9549de9d4e3fea9.olPJzAxxW4K3iBKn"
+      "apiKey": "70b65babc31042649c6b76707521ac3e.ELBnmiDH5b4V8wii"
     }
   }
 }

@@ -3,5 +3,7 @@
     "摇头": "./so101_try_009",
     "扭动": "./so101_try_010",
     "put": "~/.cache/huggingface/lerobot/put",
-    "grab0": "~/.cache/huggingface/lerobot/grab0"
+    "grab0": "~/.cache/huggingface/lerobot/grab0",
+    "grab1": "~/.cache/huggingface/lerobot/grab1",
+    "grab-1": "~/.cache/huggingface/lerobot/grab-1"
 }

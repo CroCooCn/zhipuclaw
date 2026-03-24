@@ -31,7 +31,71 @@ Reconnect the USB cable.
 
 如未先查询端口，后续命令可能会失败或找不到设备。
 
-查询方法见上文“查询端口”章节。
+查询方法见上文"查询端口"章节。
+
+---
+
+## 网络管理
+
+ROS 服务器 Web 管理界面：http://172.31.94.183:3000/
+- 用户名：jiao
+- 密码：你的密码
+
+可以通过该界面启动节点、管理服务等。
+
+## VNC 一键开启
+
+在终端执行以下命令，将自动安装并启动 VNC 服务器：
+
+```bash
+cd ~/.openclaw/skills/ROS-limo-car/scripts && python3 limo_ws_client.py --host 172.31.94.183 vnc_start
+```
+
+执行成功后，使用 VNC 客户端连接：
+- **地址**: `172.31.94.183:5901`
+- **密码**: `123456`
+
+---
+
+## 预置位置
+
+已定义的放置位置（左右手的 `grab` 和 `put` 动作对应不同的起始/目标位置）：
+
+| 位置名 | 机械臂 | 动作类型 | 描述 |
+|--------|--------|----------|------|
+| `grab0` | 左手 | 抓取 | 中央杯子（最靠近中间） |
+| `grab-1` | 左手 | 抓取 | 左边第 1 个杯子 |
+| `grab-2` | 左手 | 抓取 | 左边第 2 个杯子 |
+| `grab1` | 左手 | 抓取 | 右边第 1 个杯子 |
+| `grab2` | 左手 | 抓取 | 右边第 2 个杯子 |
+| `put` | 双手 | 放置 | 将酒杯放到托盘 |
+| `celebrate` | 右手 | 庆祝 | 庆祝动作 |
+| `home` | 双手 | 归位 | 回到初始位置 |
+
+### 实际调用示例
+
+#### 取酒（从中央杯子抓取）
+```bash
+# 先执行 grab0（抓取中央杯子），再执行 put（放到托盘）
+cd ~/.openclaw/skills/lerobot/scripts && ./play_action.sh ~/.cache/huggingface/lerobot/grab0
+cd ~/.openclaw/skills/lerobot/scripts && ./play_action.sh ~/.cache/huggingface/lerobot/put
+```
+
+#### 取酒（从左边第一个杯子抓取）
+```bash
+cd ~/.openclaw/skills/lerobot/scripts && ./play_action.sh ~/.cache/huggingface/lerobot/grab-1
+cd ~/.openclaw/skills/lerobot/scripts && ./play_action.sh ~/.cache/huggingface/lerobot/put
+```
+
+#### 庆祝动作
+```bash
+cd ~/.openclaw/skills/lerobot/scripts && ./play_action.sh ~/.cache/huggingface/lerobot/celebrate
+```
+
+#### 归位
+```bash
+cd ~/.openclaw/skills/lerobot/scripts && ./play_action.sh ~/.cache/huggingface/lerobot/home
+```
 
 ---
 
@@ -143,6 +207,19 @@ conda activate lerobot || {
     exit 1
 }
 ```
+
+---
+
+## 常见问题
+
+### Q: 动作执行失败怎么办？
+A: 重新运行命令 2-3 次，确保机械臂已校准且连接稳定。
+
+### Q: 如何确认端口号？
+A: 使用 `lerobot-find-port` 命令查询当前连接的机械臂端口。
+
+### Q: 动作数据在哪里？
+A: 所有动作数据集位于 `/Users/$USER/.cache/huggingface/lerobot/`，动作映射配置在 `assets/action.json`。
 
 ## 资料
 

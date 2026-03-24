@@ -1,7 +1,7 @@
 {
   "agent:main:main": {
-    "sessionId": "2767c251-e842-4a20-a618-18fefaae3c68",
-    "updatedAt": 1774134829882,
+    "sessionId": "e925ce78-edde-4cd9-abfb-25bb223c25fd",
+    "updatedAt": 1774167651026,
     "systemSent": true,
     "abortedLastRun": false,
     "chatType": "direct",
@@ -14,10 +14,10 @@
       "surface": "webchat",
       "chatType": "direct"
     },
-    "sessionFile": "/home/userli/.openclaw/agents/main/sessions/2767c251-e842-4a20-a618-18fefaae3c68.jsonl",
+    "sessionFile": "/home/userli/.openclaw/agents/main/sessions/e925ce78-edde-4cd9-abfb-25bb223c25fd.jsonl",
     "compactionCount": 0,
     "skillsSnapshot": {
-      "prompt": "\n\nThe following skills provide specialized instructions for specific tasks.\nUse the read tool to load a skill's file when the task matches its description.\nWhen a skill file references a relative path, resolve it against the skill directory (parent of SKILL.md / dirname of the path) and use that absolute path in tool commands.\n\n<available_skills>\n  <skill>\n    <name>coding-agent</name>\n    <description>Delegate coding tasks to Codex, Claude Code, or Pi agents via background process. Use when: (1) building/creating new features or apps, (2) reviewing PRs (spawn in temp dir), (3) refactoring large codebases, (4) iterative coding that needs file exploration. NOT for: simple one-liner fixes (just edit), reading code (use read tool), thread-bound ACP harness requests in chat (for example spawn/run Codex or Claude Code in a Discord thread; use sessions_spawn with runtime:&quot;acp&quot;), or any work in ~/clawd workspace (never spawn agents here). Claude Code: use --print --permission-mode bypassPermissions (no PTY). Codex/Pi/OpenCode: pty:true required.</description>\n    <location>~/.npm-global/lib/node_modules/openclaw/skills/coding-agent/SKILL.md</location>\n  </skill>\n  <skill>\n    <name>healthcheck</name>\n    <description>Host security hardening and risk-tolerance configuration for OpenClaw deployments. Use when a user asks for security audits, firewall/SSH/update hardening, risk posture, exposure review, OpenClaw cron scheduling for periodic checks, or version status checks on a machine running OpenClaw (laptop, workstation, Pi, VPS).</description>\n    <location>~/.npm-global/lib/node_modules/openclaw/skills/healthcheck/SKILL.md</location>\n  </skill>\n  <skill>\n    <name>node-connect</name>\n    <description>Diagnose OpenClaw node connection and pairing failures for Android, iOS, and macOS companion apps. Use when QR/setup code/manual connect fails, local Wi-Fi works but VPS/tailnet does not, or errors mention pairing required, unauthorized, bootstrap token invalid or expired, gateway.bind, gateway.remote.url, Tailscale, or plugins.entries.device-pair.config.publicUrl.</description>\n    <location>~/.npm-global/lib/node_modules/openclaw/skills/node-connect/SKILL.md</location>\n  </skill>\n  <skill>\n    <name>skill-creator</name>\n    <description>Create, edit, improve, or audit AgentSkills. Use when creating a new skill from scratch or when asked to improve, review, audit, tidy up, or clean up an existing skill or SKILL.md file. Also use when editing or restructuring a skill directory (moving files to references/ or scripts/, removing stale content, validating against the AgentSkills spec). Triggers on phrases like &quot;create a skill&quot;, &quot;author a skill&quot;, &quot;tidy up a skill&quot;, &quot;improve this skill&quot;, &quot;review the skill&quot;, &quot;clean up the skill&quot;, &quot;audit the skill&quot;.</description>\n    <location>~/.npm-global/lib/node_modules/openclaw/skills/skill-creator/SKILL.md</location>\n  </skill>\n  <skill>\n    <name>tmux</name>\n    <description>Remote-control tmux sessions for interactive CLIs by sending keystrokes and scraping pane output.</description>\n    <location>~/.npm-global/lib/node_modules/openclaw/skills/tmux/SKILL.md</location>\n  </skill>\n  <skill>\n    <name>video-frames</name>\n    <description>Extract frames or short clips from videos using ffmpeg.</description>\n    <location>~/.npm-global/lib/node_modules/openclaw/skills/video-frames/SKILL.md</location>\n  </skill>\n  <skill>\n    <name>weather</name>\n    <description>Get current weather and forecasts via wttr.in or Open-Meteo. Use when: user asks about weather, temperature, or forecasts for any location. NOT for: historical weather data, severe weather alerts, or detailed meteorological analysis. No API key needed.</description>\n    <location>~/.npm-global/lib/node_modules/openclaw/skills/weather/SKILL.md</location>\n  </skill>\n  <skill>\n    <name>ROS-camera-ws</name>\n    <description>通过 WebSocket 从 ROS 摄像头话题获取图像的 skill。适用于向本机或远端的摄像头 WebSocket 服务请求一帧 JPEG 图像并保存到本地。服务端脚本订阅 ROS2 图像话题，客户端脚本通过 JSON 请求图像。</description>\n    <location>~/.openclaw/skills/ROS-camera-ws/SKILL.md</location>\n  </skill>\n  <skill>\n    <name>ROS-limo-car</name>\n    <description>用于控制 LIMO 小车的 skill。适用于查看状态、获取摄像头图像、短时运动控制、单点或多点导航、按指定颜色目标靠近、拍照取图。所有操作通过 scripts/limo_ws_client.py 执行，输出为 JSON。</description>\n    <location>~/.openclaw/skills/ROS-limo-car/SKILL.md</location>\n  </skill>\n  <skill>\n    <name>lerobot</name>\n    <description>控制机械臂</description>\n    <location>~/.openclaw/skills/lerobot/SKILL.md</location>\n  </skill>\n</available_skills>",
+      "prompt": "\n\nThe following skills provide specialized instructions for specific tasks.\nUse the read tool to load a skill's file when the task matches its description.\nWhen a skill file references a relative path, resolve it against the skill directory (parent of SKILL.md / dirname of the path) and use that absolute path in tool commands.\n\n<available_skills>\n  <skill>\n    <name>coding-agent</name>\n    <description>Delegate coding tasks to Codex, Claude Code, or Pi agents via background process. Use when: (1) building/creating new features or apps, (2) reviewing PRs (spawn in temp dir), (3) refactoring large codebases, (4) iterative coding that needs file exploration. NOT for: simple one-liner fixes (just edit), reading code (use read tool), thread-bound ACP harness requests in chat (for example spawn/run Codex or Claude Code in a Discord thread; use sessions_spawn with runtime:&quot;acp&quot;), or any work in ~/clawd workspace (never spawn agents here). Claude Code: use --print --permission-mode bypassPermissions (no PTY). Codex/Pi/OpenCode: pty:true required.</description>\n    <location>~/.npm-global/lib/node_modules/openclaw/skills/coding-agent/SKILL.md</location>\n  </skill>\n  <skill>\n    <name>healthcheck</name>\n    <description>Host security hardening and risk-tolerance configuration for OpenClaw deployments. Use when a user asks for security audits, firewall/SSH/update hardening, risk posture, exposure review, OpenClaw cron scheduling for periodic checks, or version status checks on a machine running OpenClaw (laptop, workstation, Pi, VPS).</description>\n    <location>~/.npm-global/lib/node_modules/openclaw/skills/healthcheck/SKILL.md</location>\n  </skill>\n  <skill>\n    <name>node-connect</name>\n    <description>Diagnose OpenClaw node connection and pairing failures for Android, iOS, and macOS companion apps. Use when QR/setup code/manual connect fails, local Wi-Fi works but VPS/tailnet does not, or errors mention pairing required, unauthorized, bootstrap token invalid or expired, gateway.bind, gateway.remote.url, Tailscale, or plugins.entries.device-pair.config.publicUrl.</description>\n    <location>~/.npm-global/lib/node_modules/openclaw/skills/node-connect/SKILL.md</location>\n  </skill>\n  <skill>\n    <name>skill-creator</name>\n    <description>Create, edit, improve, or audit AgentSkills. Use when creating a new skill from scratch or when asked to improve, review, audit, tidy up, or clean up an existing skill or SKILL.md file. Also use when editing or restructuring a skill directory (moving files to references/ or scripts/, removing stale content, validating against the AgentSkills spec). Triggers on phrases like &quot;create a skill&quot;, &quot;author a skill&quot;, &quot;tidy up a skill&quot;, &quot;improve this skill&quot;, &quot;review the skill&quot;, &quot;clean up the skill&quot;, &quot;audit the skill&quot;.</description>\n    <location>~/.npm-global/lib/node_modules/openclaw/skills/skill-creator/SKILL.md</location>\n  </skill>\n  <skill>\n    <name>tmux</name>\n    <description>Remote-control tmux sessions for interactive CLIs by sending keystrokes and scraping pane output.</description>\n    <location>~/.npm-global/lib/node_modules/openclaw/skills/tmux/SKILL.md</location>\n  </skill>\n  <skill>\n    <name>video-frames</name>\n    <description>Extract frames or short clips from videos using ffmpeg.</description>\n    <location>~/.npm-global/lib/node_modules/openclaw/skills/video-frames/SKILL.md</location>\n  </skill>\n  <skill>\n    <name>weather</name>\n    <description>Get current weather and forecasts via wttr.in or Open-Meteo. Use when: user asks about weather, temperature, or forecasts for any location. NOT for: historical weather data, severe weather alerts, or detailed meteorological analysis. No API key needed.</description>\n    <location>~/.npm-global/lib/node_modules/openclaw/skills/weather/SKILL.md</location>\n  </skill>\n  <skill>\n    <name>ROS-camera-ws</name>\n    <description>通过 WebSocket 从 ROS 摄像头话题获取图像的 skill。适用于向本机或远端的摄像头 WebSocket 服务请求一帧 JPEG 图像并保存到本地。服务端脚本订阅 ROS2 图像话题，客户端脚本通过 JSON 请求图像。</description>\n    <location>~/.openclaw/skills/ROS-camera-ws/SKILL.md</location>\n  </skill>\n  <skill>\n    <name>ROS-limo-car</name>\n    <description>用于控制 LIMO 小车的 skill。适用于查看状态、获取摄像头图像、短时运动控制、单点或多点导航、按指定颜色目标靠近、拍照取图。所有操作通过 scripts/limo_ws_client.py 执行，输出为 JSON。</description>\n    <location>~/.openclaw/skills/ROS-limo-car/SKILL.md</location>\n  </skill>\n  <skill>\n    <name>lerobot</name>\n    <description>控制机械臂</description>\n    <location>~/.openclaw/skills/lerobot/SKILL.md</location>\n  </skill>\n  <skill>\n    <name>characteristic-voice</name>\n    <description>Use this skill whenever the user wants speech to sound more human, companion-like, or emotionally expressive. Triggers include: any mention of &apos;say like&apos;, &apos;talk like&apos;, &apos;speak like&apos;, &apos;companion voice&apos;, &apos;comfort me&apos;, &apos;cheer me up&apos;, &apos;sound more human&apos;, &apos;good night voice&apos;, &apos;good morning voice&apos;, or requests to add fillers, emotion, or personality to generated speech. Also use when the user wants to mimic a specific character&apos;s voice, apply speaking style presets (goodnight, morning, comfort, celebration, chatting), tune emotional parameters like warmth or tenderness, or make TTS output feel like a real person talking. If the user asks for a &apos;voice message&apos;, &apos;companion audio&apos;, &apos;character voice&apos;, or wants speech that sighs, laughs, hesitates, or sounds genuinely warm, use this skill. Do NOT use for plain text-to-speech without personality, music generation, sound effects, or general coding tasks unrelated to expressive speech.</description>\n    <location>~/.openclaw/workspace/.agents/skills/characteristic-voice/SKILL.md</location>\n  </skill>\n  <skill>\n    <name>chat-with-anyone</name>\n    <description>Chat with any real person or fictional character in their own voice by automatically finding their speech online, extracting a clean reference sample, and generating audio replies. Also supports generating a matching voice from an uploaded image. Use when the user says &quot;我想跟xxx聊天&quot;, &quot;你来扮演xxx跟我说话&quot;, &quot;让xxx给我讲讲这篇文章&quot;, &quot;我想跟图片中的人说话&quot;, or similar.</description>\n    <location>~/.openclaw/workspace/.agents/skills/chat-with-anyone/SKILL.md</location>\n  </skill>\n  <skill>\n    <name>daily-news-caster</name>\n    <description>Fetches the latest news using news-aggregator-skill, formats it into a podcast script in Markdown format, and uses the tts skill to generate a podcast audio file. Use when the user asks to get the latest news and read it out as a podcast.</description>\n    <location>~/.openclaw/workspace/.agents/skills/daily-news-caster/SKILL.md</location>\n  </skill>\n  <skill>\n    <name>template-skill</name>\n    <description>用于编写新 Agent Skill 的可复用模板，包含触发词、流程和输入输出约定。</description>\n    <location>~/.openclaw/workspace/.agents/skills/template-skill/SKILL.zh-CN.md</location>\n  </skill>\n  <skill>\n    <name>tts</name>\n    <description>Use this skill whenever the user wants to convert text into speech, generate audio from text, or produce voiceovers. Triggers include: any mention of &apos;TTS&apos;, &apos;text to speech&apos;, &apos;speak&apos;, &apos;say&apos;, &apos;voice&apos;, &apos;read aloud&apos;, &apos;audio narration&apos;, &apos;voiceover&apos;, &apos;dubbing&apos;, or requests to turn written content into spoken audio. Also use when converting EPUB/PDF/SRT/articles to audio, cloning voices from reference audio, controlling emotion or speed in speech, aligning speech to subtitle timelines, or producing per-segment voice-mapped audio.</description>\n    <location>~/.openclaw/workspace/.agents/skills/tts/SKILL.md</location>\n  </skill>\n  <skill>\n    <name>video-translation</name>\n    <description>Translate and dub videos from one language to another, replacing the original audio with TTS while keeping the video intact.</description>\n    <location>~/.openclaw/workspace/.agents/skills/video-translation/SKILL.md</location>\n  </skill>\n</available_skills>",
       "skills": [
         {
           "name": "coding-agent",
@@ -52,6 +52,26 @@
         },
         {
           "name": "lerobot"
+        },
+        {
+          "name": "characteristic-voice"
+        },
+        {
+          "name": "chat-with-anyone",
+          "primaryEnv": "NOIZ_API_KEY"
+        },
+        {
+          "name": "daily-news-caster"
+        },
+        {
+          "name": "template-skill"
+        },
+        {
+          "name": "tts",
+          "primaryEnv": "NOIZ_API_KEY"
+        },
+        {
+          "name": "video-translation"
         }
       ],
       "resolvedSkills": [
@@ -134,6 +154,54 @@
           "baseDir": "/home/userli/.openclaw/skills/lerobot",
           "source": "openclaw-managed",
           "disableModelInvocation": false
+        },
+        {
+          "name": "characteristic-voice",
+          "description": "Use this skill whenever the user wants speech to sound more human, companion-like, or emotionally expressive. Triggers include: any mention of 'say like', 'talk like', 'speak like', 'companion voice', 'comfort me', 'cheer me up', 'sound more human', 'good night voice', 'good morning voice', or requests to add fillers, emotion, or personality to generated speech. Also use when the user wants to mimic a specific character's voice, apply speaking style presets (goodnight, morning, comfort, celebration, chatting), tune emotional parameters like warmth or tenderness, or make TTS output feel like a real person talking. If the user asks for a 'voice message', 'companion audio', 'character voice', or wants speech that sighs, laughs, hesitates, or sounds genuinely warm, use this skill. Do NOT use for plain text-to-speech without personality, music generation, sound effects, or general coding tasks unrelated to expressive speech.",
+          "filePath": "/home/userli/.openclaw/workspace/.agents/skills/characteristic-voice/SKILL.md",
+          "baseDir": "/home/userli/.openclaw/workspace/.agents/skills/characteristic-voice",
+          "source": "agents-skills-project",
+          "disableModelInvocation": false
+        },
+        {
+          "name": "chat-with-anyone",
+          "description": "Chat with any real person or fictional character in their own voice by automatically finding their speech online, extracting a clean reference sample, and generating audio replies. Also supports generating a matching voice from an uploaded image. Use when the user says \"我想跟xxx聊天\", \"你来扮演xxx跟我说话\", \"让xxx给我讲讲这篇文章\", \"我想跟图片中的人说话\", or similar.",
+          "filePath": "/home/userli/.openclaw/workspace/.agents/skills/chat-with-anyone/SKILL.md",
+          "baseDir": "/home/userli/.openclaw/workspace/.agents/skills/chat-with-anyone",
+          "source": "agents-skills-project",
+          "disableModelInvocation": false
+        },
+        {
+          "name": "daily-news-caster",
+          "description": "Fetches the latest news using news-aggregator-skill, formats it into a podcast script in Markdown format, and uses the tts skill to generate a podcast audio file. Use when the user asks to get the latest news and read it out as a podcast.",
+          "filePath": "/home/userli/.openclaw/workspace/.agents/skills/daily-news-caster/SKILL.md",
+          "baseDir": "/home/userli/.openclaw/workspace/.agents/skills/daily-news-caster",
+          "source": "agents-skills-project",
+          "disableModelInvocation": false
+        },
+        {
+          "name": "template-skill",
+          "description": "用于编写新 Agent Skill 的可复用模板，包含触发词、流程和输入输出约定。",
+          "filePath": "/home/userli/.openclaw/workspace/.agents/skills/template-skill/SKILL.zh-CN.md",
+          "baseDir": "/home/userli/.openclaw/workspace/.agents/skills/template-skill",
+          "source": "agents-skills-project",
+          "disableModelInvocation": false
+        },
+        {
+          "name": "tts",
+          "description": "Use this skill whenever the user wants to convert text into speech, generate audio from text, or produce voiceovers. Triggers include: any mention of 'TTS', 'text to speech', 'speak', 'say', 'voice', 'read aloud', 'audio narration', 'voiceover', 'dubbing', or requests to turn written content into spoken audio. Also use when converting EPUB/PDF/SRT/articles to audio, cloning voices from reference audio, controlling emotion or speed in speech, aligning speech to subtitle timelines, or producing per-segment voice-mapped audio.",
+          "filePath": "/home/userli/.openclaw/workspace/.agents/skills/tts/SKILL.md",
+          "baseDir": "/home/userli/.openclaw/workspace/.agents/skills/tts",
+          "source": "agents-skills-project",
+          "disableModelInvocation": false
+        },
+        {
+          "name": "video-translation",
+          "description": "Translate and dub videos from one language to another, replacing the original audio with TTS while keeping the video intact.",
+          "filePath": "/home/userli/.openclaw/workspace/.agents/skills/video-translation/SKILL.md",
+          "baseDir": "/home/userli/.openclaw/workspace/.agents/skills/video-translation",
+          "source": "agents-skills-project",
+          "disableModelInvocation": false
         }
       ],
       "version": 0
@@ -146,8 +214,8 @@
     "contextTokens": 204800,
     "systemPromptReport": {
       "source": "run",
-      "generatedAt": 1774134817200,
-      "sessionId": "2767c251-e842-4a20-a618-18fefaae3c68",
+      "generatedAt": 1774167622491,
+      "sessionId": "e925ce78-edde-4cd9-abfb-25bb223c25fd",
       "sessionKey": "agent:main:main",
       "provider": "zai",
       "model": "glm-5",
@@ -166,9 +234,9 @@
         "sandboxed": false
       },
       "systemPrompt": {
-        "chars": 28311,
+        "chars": 31807,
         "projectContextChars": 13601,
-        "nonProjectContextChars": 14710
+        "nonProjectContextChars": 18206
       },
       "injectedWorkspaceFiles": [
         {
@@ -229,7 +297,7 @@
         }
       ],
       "skills": {
-        "promptChars": 4582,
+        "promptChars": 8078,
         "entries": [
           {
             "name": "coding-agent",
@@ -270,6 +338,30 @@
           {
             "name": "lerobot",
             "blockChars": 141
+          },
+          {
+            "name": "characteristic-voice",
+            "blockChars": 1238
+          },
+          {
+            "name": "chat-with-anyone",
+            "blockChars": 550
+          },
+          {
+            "name": "daily-news-caster",
+            "blockChars": 412
+          },
+          {
+            "name": "template-skill",
+            "blockChars": 215
+          },
+          {
+            "name": "tts",
+            "blockChars": 765
+          },
+          {
+            "name": "video-translation",
+            "blockChars": 298
           }
         ]
       },
@@ -388,16 +480,16 @@
         ]
       }
     },
-    "inputTokens": 1051,
-    "outputTokens": 410,
-    "cacheRead": 95040,
+    "inputTokens": 711,
+    "outputTokens": 1232,
+    "cacheRead": 12032,
     "cacheWrite": 0,
-    "totalTokens": 96091,
+    "totalTokens": 12716,
     "totalTokensFresh": true
   },
   "agent:main:telegram:direct:5867030229": {
     "sessionId": "065903f4-3c86-4230-b3a6-abbfa3d49f75",
-    "updatedAt": 1774131155680,
+    "updatedAt": 1774166161477,
     "systemSent": true,
     "abortedLastRun": false,
     "chatType": "direct",
@@ -550,7 +642,7 @@
     "contextTokens": 204800,
     "systemPromptReport": {
       "source": "run",
-      "generatedAt": 1774131151119,
+      "generatedAt": 1774166098348,
       "sessionId": "065903f4-3c86-4230-b3a6-abbfa3d49f75",
       "sessionKey": "agent:main:telegram:direct:5867030229",
       "provider": "zai",
@@ -786,11 +878,11 @@
         ]
       }
     },
-    "inputTokens": 336,
-    "outputTokens": 120,
-    "cacheRead": 12224,
+    "inputTokens": 207381,
+    "outputTokens": 336,
+    "cacheRead": 74240,
     "cacheWrite": 0,
-    "totalTokens": 12560,
+    "totalTokens": 74330,
     "totalTokensFresh": true
   },
   "agent:main:telegram:slash:5867030229": {
